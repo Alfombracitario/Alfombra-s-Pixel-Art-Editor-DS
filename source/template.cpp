@@ -2,12 +2,25 @@
     ADVERTENCIA: este será el código con más bitshifts y comentarios inecesarios que verás, suerte tratando de entender algo!
      -Alfombra de madeera, Septiembre de 2025
 */
+
+/*
+    To-Do list:
+    No redibujar todo al pintar
+    Exportar e importar archivos/paletas
+    mejorar el zoom
+    Permitir bpp personalizados y resoluciones distintas
+    Poder cambiar el tamaño o tipo de pincel
+
+    (puede que a futuro añada más)
+
+*/
 #include <nds.h>
 #include <stdio.h>
-
+#include <time.h>
 #include <fat.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include "GFXinput.h"
 
@@ -28,18 +41,96 @@
 #define C_PURPLE 64543
 #define C_BLACK 32768
 #define C_GRAY 48623
+//===================================================================Variables================================================================
 
-// Puntero directo a VRAM de la pantalla superior
-u16* pixelsTop = (u16*)BG_GFX;    // apunta a VRAM A
+u16* pixelsTopVRAM = (u16*)BG_GFX;
+u16* pixelsVRAM = (u16*)BG_GFX_SUB;
 
-// Acceso directo a VRAM de la pantalla inferior
-u16* pixels = (u16*)BG_GFX_SUB;     // VRAM C?
+//pixeles en RAM (para que sea más rápido trabajar con ellos)
+u16 pixelsTop[49152];
+u16 pixels[49152];
 
 //iniciar la surface (datos default)
-u16 surface[16384];//128*128
+u16 surface[16384]__attribute__((section(".iwram"))); // 16 KB en IWRAM
+//por temas de RAM, el máximo que puede medir una imagen es 128x192 que son 24kb aprox así puedo dejar 8kb a cosas random
 u16 stack[16384];// para operaciones temporales
 
-u16 toolsImg[2304];
+u16 backup[65536];//para undo/redo
+
+u16 toolsImg[2304];//imagen de las herramientas
+
+//palletas
+int palleteSize = 256;
+int palletePos = 0;
+int palleteBpp = 4;
+int palleteOffset = 0;//solo se usa en modos como 4bpp
+u16 pallete[256]__attribute__((section(".iwram")));
+u8 palEdit[3];
+//otras variables
+int prevtpx = 0;
+int prevtpy = 0;
+
+int mainSurfaceXoffset = 0;
+int mainSurfaceYoffset = 0;
+u8 subSurfaceXoffset = 0;
+u8 subSurfaceYoffset = 0;
+u8 subSurfaceZoom = 3;//8 veces más cerca
+
+//Solo acepto potencias de 2   >:3
+u8 surfaceXres = 7;
+u8 surfaceYres = 7;
+
+bool showGrid = false;
+
+// Variables globales para controlar el modo actual
+enum subMode { SUB_TEXT, SUB_BITMAP };
+subMode currentSubMode = SUB_BITMAP;
+
+enum consoleMode { MODE_NO, LOAD_PALLETE, SAVE_PALLETE, LOAD_IMAGE, SAVE_IMAGE};
+consoleMode currentConsoleMode = MODE_NO;
+
+int selector = 0;//selector para la consola
+
+bool stylusPressed = false;
+//botones
+typedef struct {
+    int x, y;
+    int w, h;
+    bool pressed;
+} Button;
+
+enum {
+    ACTION_NONE      = 0,
+    ACTION_UP        = 1 << 0,
+    ACTION_DOWN      = 1 << 1,
+    ACTION_LEFT      = 1 << 2,
+    ACTION_RIGHT     = 1 << 3,
+    ACTION_ZOOM_IN   = 1 << 4,
+    ACTION_ZOOM_OUT  = 1 << 5,
+};
+
+typedef enum {
+    TOOL_BRUSH,
+    TOOL_ERASER,
+    TOOL_BUCKET,
+    TOOL_PICKER
+} ToolType;
+
+ToolType currentTool = TOOL_BRUSH; // por defecto
+
+
+//función para pasar de RAM a VRAM
+inline void submitVRAM()
+{
+    // Transferir pixelsTop a VRAM principal
+    int offset = (mainSurfaceYoffset<<8)+mainSurfaceXoffset;
+    int size = (1 << surfaceXres) << surfaceYres;
+    dmaCopyHalfWords(3,pixelsTop+offset, pixelsTopVRAM+offset, size<<2);//solo copia la pantalla
+
+    // Transferir pixels a VRAM secundaria
+    dmaCopyHalfWords(3,pixels, pixelsVRAM, 49152 * sizeof(u16));
+}
+
 
 
 // Helper color
@@ -54,16 +145,16 @@ inline u16 InvertColor(u16 color)
 {
     return (~color) | 0x8000; //recordemos que alpha debe ser 1
 }
-// Dibuja un pixel
+
+// Dibuja un pixel (sub)
 inline void setPixel(int x, int y, u16 color) {
     pixels[(y<<8) + x] = color;
 }
-
+//lo lee (sub)
 inline u16 readPixel(int x, int y)
 {
     return pixels[(y<<8) + x];
 }
-
 inline void drawRectangle(int x,int width, int y,int height, u16 color){//No uso DMA porque por lo general los rectangulos no son muy grandes
     int xlimit = x+width;
     int ylimit = y+height;
@@ -77,32 +168,27 @@ inline void drawRectangle(int x,int width, int y,int height, u16 color){//No uso
     }
 }
 
-inline void drawRectangleDMA(int x, int width, int y, int height, u16 color) {
-    static u16 fillLine[256];  // buffer temporal (máx ancho pantalla)
-    
-    // Prepara una línea con el color
-    for (int i = 0; i < width; i++) {
-        fillLine[i] = color;
-    }
+inline void fillDMA(u16 *arr, int start, int end, u16 value) {//array, x0, x1, color
+    int count = end - start;
+    dmaFillHalfWords(value, &arr[start], count<<1);
+}
 
-    // Copia la línea a cada fila del rectángulo
-    for (int row = 0; row < height; row++) {
-        u16* dst = &pixels[((y + row)<<8) + x];
-        dmaCopyHalfWords(3, fillLine, dst, width<<1); // ancho * 2 bytes (u16)
+
+inline void drawRectangleDMA(int x, int width, int y, int height, u16 color) {
+    int xto = x+width;
+    height += y;
+    for (int i = y; i < height; i++) {
+        int _i = i<<8;
+        fillDMA(pixels,_i+x,_i+xto,color);//pixel es el acceso directo a la VRAM
     }
 }
-inline void drawRectangleMainDMA(int x, int width, int y, int height, u16 color) {
-    static u16 fillLine[256];  // buffer temporal (máx ancho pantalla)
-    
-    // Prepara una línea con el color
-    for (int i = 0; i < width; i++) {
-        fillLine[i] = color;
-    }
 
-    // Copia la línea a cada fila del rectángulo
-    for (int row = 0; row < height; row++) {
-        u16* dst = &pixelsTop[((y + row)<<8) + x];
-        dmaCopyHalfWords(3, fillLine, dst, width<<1); // ancho * 2 bytes (u16)
+inline void drawRectangleMainDMA(int x, int width, int y, int height, u16 color) {
+    int xto = x+width;
+    height += y;
+    for (int i = y; i < height; i++) {
+        int _i = i<<8;
+        fillDMA(pixelsTop,_i+x,_i+xto,color);//pixel es el acceso directo a la VRAM
     }
 }
 
@@ -144,47 +230,22 @@ inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfa
 
 inline void drawVlineSub(int y0, int y1, int x, u16 color)
 {
-    for(int i = y0; i < y1; i++)
+    y0 = (y0<<8)+x;
+    y1 = (y1<<8)+x;
+    for(int i = y0; i < y1; i+=256)
     {
-        pixels[(i<<8)+x] = color;
+        pixels[i] = color;
     }
 }
-
 inline void drawHlineSub(int x0, int x1, int y, u16 color)
 {
     y = y<<8;
-    for(int i = x0; i < x1; i++)
-    {
-        pixels[y+i] = color;
-    }
+    fillDMA(pixels,y+x0,y+x1,color);
 }
-
-//palletas
-int palleteSize = 256;
-int palletePos = 0;
-int palleteBpp = 4;
-int palleteOffset = 0;//solo se usa en modos como 4bpp
-u16 pallete[256];
-u8 palEdit[3];
-//otras variables
-int prevtpx = 0;
-int prevtpy = 0;
-
-int mainSurfaceXoffset = 0;
-int mainSurfaceYoffset = 0;
-u8 subSurfaceXoffset = 0;
-u8 subSurfaceYoffset = 0;
-u8 subSurfaceZoom = 3;//8 veces más cerca
-
-//Solo acepto potencias de 2   >:3
-u8 surfaceXres = 7;
-u8 surfaceYres = 7;
-
-
 inline void drawGrid()
 {
     int separation = 1<<subSurfaceZoom;
-    int rep = 128/separation;
+    int rep = 128>>subSurfaceZoom;
     for(int i = 0; i < rep; i++)
     {
         drawHlineSub(64,192,i*separation,C_WHITE);
@@ -234,28 +295,43 @@ inline void updatePal(int increment, int *palletePos)
     posy = *palletePos >>4;
     drawRectangleHollow(192+(posx<<2),4,64+(posy<<2),4,InvertColor(_col));//dibujamos el nuevo contorno
 }
+
 //=========================================================DRAW SURFACE========================================================================
 
-
-
-inline void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0)
+//por algún motivo inline bajaba el rendimiento
+void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0)
 {
     int xres = 1<<xsize;   // ancho
     int yres = 1<<ysize;   // alto
 
-    for(int i = 0; i < yres; i++) // eje Y
+    if(palleteOffset == 0)
     {
-        int _y = i <<xsize; // fila en surface
-        int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
-
-        for(int j = 0; j < xres; j++) // eje X
+        for(int i = 0; i < yres; i++) // eje Y
         {
-            pixelsTop[y+j] = pallete[palleteOffset + surface[_y+j]];
+            int _y = i <<xsize; // fila en surface
+            int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
+
+            for(int j = 0; j < xres; j++) // eje X
+            {
+                pixelsTop[y+j] = pallete[surface[_y+j]];
+            }
+        }
+    }
+    else
+    {
+        for(int i = 0; i < yres; i++) // eje Y
+        {
+            int _y = i <<xsize; // fila en surface
+            int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
+
+            for(int j = 0; j < xres; j++) // eje X
+            {
+                pixelsTop[y+j] = pallete[palleteOffset + surface[_y+j]];
+            }
         }
     }
 }
-
-inline void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
+void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
     int xres = 1 << xsize;
     int yres = 1 << ysize;
 
@@ -273,39 +349,30 @@ inline void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
 
     // rama con zoom: escalado por filas + DMA
     int blockSize = 128 >> subSurfaceZoom;
-    int yrepeat = 1 << subSurfaceZoom;
-    int xoffset = subSurfaceXoffset * blockSize;  // ahora sí se usa correctamente
-    int yoffset = subSurfaceYoffset * blockSize;
+    int yrepeat   = 1 << subSurfaceZoom;
+    int xoffset   = subSurfaceXoffset * blockSize;
+    int yoffset   = subSurfaceYoffset * blockSize;
 
-    static u16 temp[128];
     int dstY = 0;
 
-    for(int i = 0; i < blockSize; i++) {
+    for (int i = 0; i < blockSize; i++) {
         int srcY = i + mainSurfaceYoffset + yoffset;
-        u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset; // Xoffset aplicado correctamente
+        u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
 
-        for(int j = 0; j < 128; j++) {
-            temp[j] = srcRow[j >> subSurfaceZoom];
-        }
-
-        for(int k = 0; k < yrepeat; k++) {
+        for (int k = 0; k < yrepeat; k++) {
             u16* dstRow = pixels + (dstY << 8) + 64;
-            dmaCopyHalfWords(3, temp, dstRow, 256);
+
+            for (int j = 0; j < 128; j++) {
+                dstRow[j] = srcRow[j >> subSurfaceZoom];
+            }
             dstY++;
         }
     }
-
     //placeholder
     drawGrid();
 }
 
 //====================================================================Compatibilidad con modos gráficos====================================|
-// Variables globales para controlar el modo actual
-enum SubMode { SUB_TEXT, SUB_BITMAP };
-SubMode currentSubMode = SUB_BITMAP;
-
-// Punteros a VRAM y buffers
-static u16* subBitmapBuffer = (u16*)VRAM_C_SUB_BG; // memoria contigua para bitmap 16-bit
 
 inline void SubTextMode()
 {
@@ -347,7 +414,7 @@ inline void clearTopBitmap()
         _col = ARGB(r,0,b);
         for(int i = 0; i < 256; i++)//rellenar toda la línea horizontal
         {
-                pixelsTop[(j<<8)+i] = _col;
+                pixelsTopVRAM[(j<<8)+i] = _col;
         }
     }
 }
@@ -365,33 +432,6 @@ inline void drawTools()
     }
 }
 //============================================================= INPUT =================================================|
-bool stylusPressed = false;
-//botones
-typedef struct {
-    int x, y;
-    int w, h;
-    bool pressed;
-} Button;
-
-enum {
-    ACTION_NONE      = 0,
-    ACTION_UP        = 1 << 0,
-    ACTION_DOWN      = 1 << 1,
-    ACTION_LEFT      = 1 << 2,
-    ACTION_RIGHT     = 1 << 3,
-    ACTION_ZOOM_IN   = 1 << 4,
-    ACTION_ZOOM_OUT  = 1 << 5,
-};
-
-typedef enum {
-    TOOL_BRUSH,
-    TOOL_ERASER,
-    TOOL_BUCKET,
-    TOOL_PICKER
-} ToolType;
-
-ToolType currentTool = TOOL_BRUSH; // por defecto
-
 inline int getActionsFromKeys(int keys) {
     int actions = ACTION_NONE;
 
@@ -415,15 +455,13 @@ inline int getActionsFromTouch(int button) {
         case 6: actions |= ACTION_DOWN; break;
         case 0: actions |= ACTION_ZOOM_IN; break;
         case 4: actions |= ACTION_ZOOM_OUT; break;
-        case 3: //load pallete
+
+        //no pongo código aquí porque va en otra parte
+        case 3:
             SubTextMode();
-            iprintf("Load pallete");
-            iprintf("\nOh, btw you're softblocked");
-        break;// load pallete
+        break;
         case 7:
             SubTextMode();
-            iprintf("Save pallete");
-            iprintf("\nOh, btw you're softblocked");
         break;
     }
     return actions;
@@ -451,7 +489,7 @@ inline void applyActions(int actions) {
         subSurfaceYoffset >>= 1;
     }
 }
-inline void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {
+inline void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {//NECESITA SER ARREGLADO!
     if (oldColor == newColor) return;
     if (surface[(y << xres) + x] != oldColor) return;
 
@@ -503,8 +541,108 @@ inline void applyTool(int x, int y, bool dragging) {
             break;
     }
 }
+//=======================================================CONSOLA DE TEXTO==================================================================|
+#define MAX_FILES 256
+
+char* files[MAX_FILES];
+int fileCount = 0;
+FILE* currentFile = NULL;
+
+
+void saveFile(const char* path, const char* data, size_t length) {
+    FILE* f = fopen(path, "wb"); // write binary
+    if(!f) return; // error
+    fwrite(data, 1, length, f);
+    fclose(f);
+}
+
+
+void openFile(const char* path) {
+    if(currentFile) fclose(currentFile);  // cerrar si ya había otro abierto
+    currentFile = fopen(path, "rb");      // "rb" = read binary
+    if(!currentFile) {
+        // error al abrir
+    }
+}
+
+void openFolder(const char* path) {
+    DIR* dir = opendir(path);
+    if (!dir) return;
+
+    struct dirent* entry;
+    fileCount = 0;
+    while ((entry = readdir(dir)) != NULL && fileCount < MAX_FILES) {
+        files[fileCount] = strdup(entry->d_name);  // guarda el nombre
+        fileCount++;
+    }
+    closedir(dir);
+}
+
+void exitConsole()
+{
+    //yo me encargo de esto
+}
+
+void consoleInput()
+{
+    if(keysDown() & KEY_DOWN)
+    {
+        if(selector > 0)selector--;
+    }
+    if(keysDown() & KEY_UP)
+    {
+        if(selector > 0)selector++;
+    }
+}
+
+void drawConsoleInfo() {
+    consoleClear();
+    for(int i=0; i<fileCount; i++) {
+        if(i == selector) iprintf("> %s\n", files[i]);
+        else iprintf("  %s\n", files[i]);
+    }
+}
+
+//====================================================================FPS==================================================================|
+int fps = 0;
+int frameCount = 0;
+time_t lastTime = 0;
+
+void initFPS() {
+    lastTime = time(NULL);
+    frameCount = 0;
+    fps = 0;
+}
+
+void updateFPS() {
+    frameCount++;
+    time_t now = time(NULL);
+    if(now != lastTime) {  // pasó 1 segundo real
+        fps = frameCount;
+        frameCount = 0;
+        lastTime = now;
+    }
+}
 //====================================================================MAIN=================================================================|
 int main(void) {
+
+    //lo primero, limpiar basura
+    for(int i = 0; i < 16383; i++)
+    {
+        surface[i] = 0;
+        stack[i] = 0;
+    }
+    for(int i = 1; i < palleteSize; i++) {
+        pallete[i] = C_BLACK;
+    }
+    for(int i = 0; i < 192*256; i++)
+    {
+        pixels[i] = 0;
+        pixelsTop[i] = 0;
+        pixelsTopVRAM[i] = 0;
+        pixelsVRAM[i] = 0;
+    }
+    initFPS();
     // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
     videoSetMode(MODE_0_2D);                // modo texto
     vramSetBankA(VRAM_A_MAIN_BG);           // VRAM A a BG principal
@@ -525,10 +663,15 @@ int main(void) {
         iprintf("\x1b[38m\n");//blanco
         iprintf("You cannot load or save files.\n");
 
-        iprintf("\nStarting in 5 seconds.");
-        // esperar 2 segundos
-        for (int i = 0; i < 300; i++) swiWaitForVBlank();
-
+        iprintf("\nStarting in 3 seconds");
+        for (int i = 0; i < 3; i++)//cantidad segundos
+        {
+            iprintf(".");
+            for(int j = 0; j < 60; j++)
+            {
+                swiWaitForVBlank();
+            }
+        }
         // restaurar pantalla inferior a bitmap
         videoSetModeSub(MODE_5_2D);
         vramSetBankC(VRAM_C_SUB_BG);
@@ -548,6 +691,9 @@ int main(void) {
     // Cargar imagen inicial
     decompress(GFXinputBitmap, BG_GFX_SUB, LZ77Vram);
 
+    // Transferir pixels a la RAM
+    dmaCopyHalfWords(3,pixelsVRAM,pixels , 49152 * sizeof(u16));
+
     //copiar la imagen de los botones grandes
     for(int i = 16; i < 64; i++)//eje vertical
     {
@@ -562,14 +708,6 @@ int main(void) {
     mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
     mainSurfaceYoffset = 96-((1<<surfaceYres)>>1);
 
-    //limpiamos basura
-    for(int i = 0; i < 16383; i++)
-    {
-        surface[i] = 0;
-    }
-    for(int i = 1; i < palleteSize; i++) {
-        pallete[i] = C_BLACK;
-    }
     clearTopBitmap();
     //antes de entrar al loop iniciaré unos datos más por si acaso
     updatePal(0, &palletePos);
@@ -662,7 +800,6 @@ int main(void) {
                     }
                 }
 
-
                 //zona de paletas y otras configuraciones
                 if(touch.px >= 192)//apunta a la parte derecha
                 {
@@ -730,8 +867,15 @@ int main(void) {
         }
         else//si estamos en modo consola de texto
         {
-
+            
         }
+
+    //final del loop
+    submitVRAM();
+    updateFPS();
+    //dibujar los FPS (penca lol)
+    fillDMA(pixelsTopVRAM,0,60,C_BLACK);
+    fillDMA(pixelsTopVRAM,0,fps,C_GREEN);
     }
     return 0;
 }
