@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "drunkenlogo.h"
+#include "GFXinput.h"
 
 #define SCREEN_W 256
 #define SCREEN_H 256
@@ -546,7 +546,7 @@ int main(void) {
     bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
 
     // Cargar imagen inicial
-    decompress(drunkenlogoBitmap, BG_GFX_SUB, LZ77Vram);
+    decompress(GFXinputBitmap, BG_GFX_SUB, LZ77Vram);
 
     //copiar la imagen de los botones grandes
     for(int i = 16; i < 64; i++)//eje vertical
