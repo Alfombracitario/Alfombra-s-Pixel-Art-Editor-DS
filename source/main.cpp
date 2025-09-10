@@ -11,6 +11,7 @@
     Permitir bpp personalizados y resoluciones distintas
     Poder cambiar el tamaño o tipo de pincel
 
+    Migrar el sistema usando sprites.
     (puede que a futuro añada más)
 
 */
@@ -22,7 +23,9 @@
 #include <unistd.h>
 #include <dirent.h>
 
+#include "avdslib.h"
 #include "GFXinput.h"
+#include "GFXselector24.h"
 
 #define SCREEN_W 256
 #define SCREEN_H 256
@@ -43,28 +46,26 @@
 #define C_GRAY 48623
 //===================================================================Variables================================================================
 
+//importante definir esto para que mi "librería" lo use
 u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
-
-//pixeles en RAM (para que sea más rápido trabajar con ellos)
 u16 pixelsTop[49152];
-u16 pixels[49152];
+u16 pixels[49152]
 
-//iniciar la surface (datos default)
 u16 surface[16384]__attribute__((section(".iwram"))); // 16 KB en IWRAM
+u16 pallete[256]__attribute__((section(".iwram"))); // 512 bytes en IWRAM
+
 //por temas de RAM, el máximo que puede medir una imagen es 128x192 que son 24kb aprox así puedo dejar 8kb a cosas random
+
 u16 stack[16384];// para operaciones temporales
 
 u16 backup[65536];//para undo/redo
-
-u16 toolsImg[2304];//imagen de las herramientas
 
 //palletas
 int palleteSize = 256;
 int palletePos = 0;
 int palleteBpp = 4;
 int palleteOffset = 0;//solo se usa en modos como 4bpp
-u16 pallete[256]__attribute__((section(".iwram")));
 u8 palEdit[3];
 //otras variables
 int prevtpx = 0;
@@ -130,86 +131,6 @@ inline void submitVRAM()
     // Transferir pixels a VRAM secundaria
     dmaCopyHalfWords(3,pixels, pixelsVRAM, 49152 * sizeof(u16));
 }
-
-
-
-// Helper color
-inline u16 ARGB(int r, int g, int b, int a = 1) {
-    return ((a & 1) << 15)       // Alpha en bit 15
-         | ((b & 31) << 10)      // Azul
-         | ((g & 31) << 5)       // Verde
-         |  (r & 31);            // Rojo
-}
-
-inline u16 InvertColor(u16 color)
-{
-    return (~color) | 0x8000; //recordemos que alpha debe ser 1
-}
-
-// Dibuja un pixel (sub)
-inline void setPixel(int x, int y, u16 color) {
-    pixels[(y<<8) + x] = color;
-}
-//lo lee (sub)
-inline u16 readPixel(int x, int y)
-{
-    return pixels[(y<<8) + x];
-}
-inline void drawRectangle(int x,int width, int y,int height, u16 color){//No uso DMA porque por lo general los rectangulos no son muy grandes
-    int xlimit = x+width;
-    int ylimit = y+height;
-    for(int i = y; i < ylimit; i++)//eje vertical
-    {
-        int _y = i<<8;
-        for(int j = x; j < xlimit; j++)//eje horizontal
-        {
-            pixels[_y + j] = color;
-        }
-    }
-}
-
-inline void fillDMA(u16 *arr, int start, int end, u16 value) {//array, x0, x1, color
-    int count = end - start;
-    dmaFillHalfWords(value, &arr[start], count<<1);
-}
-
-
-inline void drawRectangleDMA(int x, int width, int y, int height, u16 color) {
-    int xto = x+width;
-    height += y;
-    for (int i = y; i < height; i++) {
-        int _i = i<<8;
-        fillDMA(pixels,_i+x,_i+xto,color);//pixel es el acceso directo a la VRAM
-    }
-}
-
-inline void drawRectangleMainDMA(int x, int width, int y, int height, u16 color) {
-    int xto = x+width;
-    height += y;
-    for (int i = y; i < height; i++) {
-        int _i = i<<8;
-        fillDMA(pixelsTop,_i+x,_i+xto,color);//pixel es el acceso directo a la VRAM
-    }
-}
-
-inline void drawRectangleHollow(int x, int width, int y, int height, u16 color) {
-    int xlimit = x + width;
-    int ylimit = y + height;
-
-    // línea superior e inferior
-    for (int i = x; i < xlimit; i++) {
-        pixels[(y << 8) + i]         = color;       // top
-        pixels[((ylimit - 1) << 8) + i] = color;    // bottom
-    }
-
-    // líneas laterales
-    for (int j = y + 1; j < (ylimit - 1); j++) {
-        pixels[(j << 8) + x]         = color;       // left
-        pixels[(j << 8) + (xlimit - 1)] = color;    // right
-    }
-}
-
-
 inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
     int dx = abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
@@ -228,28 +149,14 @@ inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfa
     }
 }
 
-inline void drawVlineSub(int y0, int y1, int x, u16 color)
-{
-    y0 = (y0<<8)+x;
-    y1 = (y1<<8)+x;
-    for(int i = y0; i < y1; i+=256)
-    {
-        pixels[i] = color;
-    }
-}
-inline void drawHlineSub(int x0, int x1, int y, u16 color)
-{
-    y = y<<8;
-    fillDMA(pixels,y+x0,y+x1,color);
-}
 inline void drawGrid()
 {
     int separation = 1<<subSurfaceZoom;
     int rep = 128>>subSurfaceZoom;
     for(int i = 0; i < rep; i++)
     {
-        drawHlineSub(64,192,i*separation,C_WHITE);
-        drawVlineSub(0,128,64+(i*separation),C_WHITE);
+        AVdrawHlineDMA(pixels,64,192,i*separation,C_WHITE);
+        AVdrawVline(pixels,0,128,64+(i*separation),C_WHITE);
     }
 }
 
@@ -268,7 +175,7 @@ inline void updatePal(int increment, int *palletePos)
     u16 _col = pallete[*palletePos];
 
     //reparamos el slot anterior
-    drawRectangleHollow(192+(posx<<2),4,64+(posy<<2),4,_col);
+    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,_col);
 
     //nueva información
     *palletePos+=increment;
@@ -284,22 +191,22 @@ inline void updatePal(int increment, int *palletePos)
 
     for(int i = 0; i < 3; i++)
     {
-        drawRectangle(192,_barColAmount[i]<<1,(i<<3)+40,8,_barCol[i]);//barra de color
-        drawRectangle(192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
+        AVdrawRectangle(pixels,192,_barColAmount[i]<<1,(i<<3)+40,8,_barCol[i]);//barra de color
+        AVdrawRectangle(pixels,192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
     }
 
-    drawRectangle(192,64,32,8,_col);//rectángulo de arriba (color mezclado)
+    AVdrawRectangle(pixels,192,64,32,8,_col);//rectángulo de arriba (color mezclado)
 
     //obtenemos la coordenada de la paleta (otra vez)
     posx = *palletePos & 15;
     posy = *palletePos >>4;
-    drawRectangleHollow(192+(posx<<2),4,64+(posy<<2),4,InvertColor(_col));//dibujamos el nuevo contorno
+    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
 }
 
 //=========================================================DRAW SURFACE========================================================================
 
 //por algún motivo inline bajaba el rendimiento
-void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0)
+void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0) //no usamos sprites aún, ya que la info la copiaremos desde acá
 {
     int xres = 1<<xsize;   // ancho
     int yres = 1<<ysize;   // alto
@@ -335,7 +242,7 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
     int xres = 1 << xsize;
     int yres = 1 << ysize;
 
-    // rama sin zoom: copia directa por DMA
+    // rama sin zoom: copia directa por DMA, desactiva el sprite
     if(subSurfaceZoom == 0 && xres == 128) {
         yres = (yres - 1) & 127;
         yres++;
@@ -347,16 +254,16 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
         return;
     }
 
-    // rama con zoom: escalado por filas + DMA
+    //calcular offsets y repeticiones
     int blockSize = 128 >> subSurfaceZoom;
     int yrepeat   = 1 << subSurfaceZoom;
     int xoffset   = subSurfaceXoffset * blockSize;
     int yoffset   = subSurfaceYoffset * blockSize;
 
-    int dstY = 0;
+    int dstY = 0;// fila destino
 
     for (int i = 0; i < blockSize; i++) {
-        int srcY = i + mainSurfaceYoffset + yoffset;
+        int srcY = i + mainSurfaceYoffset + yoffset;// 
         u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
 
         for (int k = 0; k < yrepeat; k++) {
@@ -368,8 +275,6 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
             dstY++;
         }
     }
-    //placeholder
-    drawGrid();
 }
 
 //====================================================================Compatibilidad con modos gráficos====================================|
@@ -399,7 +304,7 @@ inline void clearTopBitmap()
     u8 r = 16;
     u8 b = 16;
     u16 _col = 0;
-    for(int j = 0; j < 192; j++)//all the top screen
+    for(int j = 0; j < 192; j++)//toda la pantalla superior (sí, así de optimizado lol)
     {
         if(j < 176)
         {
@@ -411,24 +316,8 @@ inline void clearTopBitmap()
             if(r < 16 && j >= 184) {r+=2;}
             if(b < 16) {b++;}   
         }
-        _col = ARGB(r,0,b);
-        for(int i = 0; i < 256; i++)//rellenar toda la línea horizontal
-        {
-                pixelsTopVRAM[(j<<8)+i] = _col;
-        }
-    }
-}
-inline void drawTools()
-{
-    //pegar la imagen de los botones grandes
-    for(int i = 16; i < 64; i++)//eje vertical
-    {
-        int y = (i-16)*48;
-        int _y = i<<8;
-        for(int j = 0; j < 48; j++)//eje horizontal
-        {
-            pixels[_y+j] = toolsImg[y+j];
-        }
+        _col = AVARGB(r,0,b);
+        AVfillDMA(pixelsTopVRAM,j<<8,(((j+1)<<8)-1),_col);
     }
 }
 //============================================================= INPUT =================================================|
@@ -463,6 +352,7 @@ inline int getActionsFromTouch(int button) {
         case 7:
             SubTextMode();
         break;
+        //UPDATE
     }
     return actions;
 }
@@ -580,7 +470,7 @@ void openFolder(const char* path) {
 
 void exitConsole()
 {
-    //yo me encargo de esto
+
 }
 
 void consoleInput()
@@ -623,7 +513,7 @@ void updateFPS() {
         lastTime = now;
     }
 }
-//====================================================================MAIN=================================================================|
+//====================================================================MAIN==================================================================================================================|
 int main(void) {
 
     //lo primero, limpiar basura
@@ -645,8 +535,6 @@ int main(void) {
     initFPS();
     // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
     videoSetMode(MODE_0_2D);                // modo texto
-    vramSetBankA(VRAM_A_MAIN_BG);           // VRAM A a BG principal
-    consoleDemoInit();                      // inicializar consola en la pantalla principal
 
     // Intentar montar la SD
     bool sd_ok = fatInitDefault();
@@ -680,12 +568,14 @@ int main(void) {
 
 
     // --- Ahora cambiamos al modo bitmap normal ---
-    videoSetMode(MODE_5_2D);                // pantalla superior bitmap
+    videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
+    vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
     bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
 
     videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
+    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
     bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
 
     // Cargar imagen inicial
@@ -694,15 +584,11 @@ int main(void) {
     // Transferir pixels a la RAM
     dmaCopyHalfWords(3,pixelsVRAM,pixels , 49152 * sizeof(u16));
 
-    //copiar la imagen de los botones grandes
-    for(int i = 16; i < 64; i++)//eje vertical
-    {
-        int y = (i-16)*48;
-        for(int j = 0; j < 48; j++)//eje horizontal
-        {
-            toolsImg[y+j] = pixels[(i<<8)+j];
-        }
-    }
+    //iniciamos el sprite para dibujar : )
+    oamInit(&oamMain, SpriteMapping_1D_128, false);
+    oamInit(&oamSub, SpriteMapping_1D_128, false);
+    oamClear(&oamMain, 0, 128);
+    oamClear(&oamSub, 0, 128);
 
     //aquí está cómo obtener los offsets de main surface :)
     mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
@@ -759,6 +645,7 @@ int main(void) {
             // leer touch
             touchPosition touch;
             touchRead(&touch);
+            //PLACEHOLDER
 
             if (keysHeld() & KEY_TOUCH) {
                 if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X) && touch.py < (1 << surfaceYres)) {//apunta a la surface
@@ -794,8 +681,7 @@ int main(void) {
                         currentTool = (ToolType)(row + col);
 
                         //además dibujamos un contorno en dónde seleccionamos
-                        drawTools();//Borramos el marco anterior
-                        drawRectangleHollow(col*24,24,16+(row*12),24,C_WHITE);
+                        oamSetXY(&oamSub,6,(col*24)-12, (row)+16);//sprite 6 es el contorno 24x24
                         stylusPressed = true;
                     }
                 }
@@ -821,9 +707,9 @@ int main(void) {
                         //actualizar barra
 
                         u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
-                        drawRectangle(192,amount<<1,(index<<3)+40,8,_barCol[index]);
+                        AVdrawRectangle(pixels,192,amount<<1,(index<<3)+40,8,_barCol[index]);
                         //Limpiar el area
-                        drawRectangle(192+(amount<<1),64-(amount<<1),(index<<3)+40,8,C_BLACK);
+                        AVdrawRectangle(pixels,192+(amount<<1),64-(amount<<1),(index<<3)+40,8,C_BLACK);
 
                         //actualizar el color
                         u16 _col = palEdit[0];
@@ -832,17 +718,17 @@ int main(void) {
                         _col += 32768;//encender pixel
                         pallete[palletePos] = _col;
                         //dibujar en la pantalla
-                        drawRectangle(192+((palletePos & 15)<<2),4, 64+((palletePos>>4)<<2) ,4,_col);
+                        AVdrawRectangle(pixels,192+((palletePos & 15)<<2),4, 64+((palletePos>>4)<<2) ,4,_col);
                         
                         drawSurfaceMain(surfaceXres, surfaceYres);
                         drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
 
                         //dibujar arriba el nuevo color generado
-                        drawRectangleDMA(192,64,32,8,_col);
+                        AVdrawRectangleDMA(pixels,192,64,32,8,_col);
 
                         //dibujar el contorno del color seleccionado
-                        _col = InvertColor(_col);
-                        drawRectangleHollow(192+((palletePos & 15)<<2),4, 64+((palletePos>>4)<<2) ,4,_col);
+                        _col = AVinvertColor(_col);
+                        AVdrawRectangleHollow(pixels,192+((palletePos & 15)<<2),4, 64+((palletePos>>4)<<2) ,4,_col);
                     }
                     else//seleccionar un color en la paleta
                     {
@@ -869,13 +755,12 @@ int main(void) {
         {
             
         }
-
-    //final del loop
-    submitVRAM();
-    updateFPS();
-    //dibujar los FPS (penca lol)
-    fillDMA(pixelsTopVRAM,0,60,C_BLACK);
-    fillDMA(pixelsTopVRAM,0,fps,C_GREEN);
+        
+        submitVRAM();
+        updateFPS();
+        //dibujar los FPS (penca lol)
+        AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
+        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
     }
     return 0;
 }

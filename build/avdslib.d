@@ -1,5 +1,5 @@
-template.o: \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/template.cpp \
+avdslib.o: \
+ C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/avdslib.cpp \
  C:/devkitPro/libnds/include/nds.h C:/devkitPro/calico/include/calico.h \
  C:/devkitPro/calico/include/calico/types.h \
  C:/devkitPro/calico/include/calico/arm/psr.h \
@@ -111,11 +111,7 @@ template.o: \
  C:/devkitPro/libnds/include/nds/arm9/sprite.h \
  C:/devkitPro/libnds/include/nds/arm9/trig_lut.h \
  C:/devkitPro/libnds/include/nds/arm9/video.h \
- C:/devkitPro/libnds/include/nds/arm9/videoGL.h \
- C:/devkitPro/libnds/include/fat.h C:/devkitPro/libnds/include/dvm.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXinput.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXempty.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h
+ C:/devkitPro/libnds/include/nds/arm9/videoGL.h
 C:/devkitPro/libnds/include/nds.h:
 C:/devkitPro/calico/include/calico.h:
 C:/devkitPro/calico/include/calico/types.h:
@@ -229,8 +225,3 @@ C:/devkitPro/libnds/include/nds/arm9/sprite.h:
 C:/devkitPro/libnds/include/nds/arm9/trig_lut.h:
 C:/devkitPro/libnds/include/nds/arm9/video.h:
 C:/devkitPro/libnds/include/nds/arm9/videoGL.h:
-C:/devkitPro/libnds/include/fat.h:
-C:/devkitPro/libnds/include/dvm.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXinput.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXempty.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h:
