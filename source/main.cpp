@@ -25,7 +25,7 @@
 
 #include "avdslib.h"
 #include "GFXinput.h"
-#include "GFXselector24.h"
+//#include "GFXselector24.h"
 
 #define SCREEN_W 256
 #define SCREEN_H 256
@@ -45,12 +45,13 @@
 #define C_BLACK 32768
 #define C_GRAY 48623
 //===================================================================Variables================================================================
+static PrintConsole topConsole;
+static PrintConsole bottomConsole;
 
-//importante definir esto para que mi "librería" lo use
 u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
 u16 pixelsTop[49152];
-u16 pixels[49152]
+u16 pixels[49152];
 
 u16 surface[16384]__attribute__((section(".iwram"))); // 16 KB en IWRAM
 u16 pallete[256]__attribute__((section(".iwram"))); // 512 bytes en IWRAM
@@ -64,7 +65,7 @@ u16 backup[65536];//para undo/redo
 //palletas
 int palleteSize = 256;
 int palletePos = 0;
-int palleteBpp = 4;
+int palleteBpp = 8;
 int palleteOffset = 0;//solo se usa en modos como 4bpp
 u8 palEdit[3];
 //otras variables
@@ -87,18 +88,12 @@ bool showGrid = false;
 enum subMode { SUB_TEXT, SUB_BITMAP };
 subMode currentSubMode = SUB_BITMAP;
 
-enum consoleMode { MODE_NO, LOAD_PALLETE, SAVE_PALLETE, LOAD_IMAGE, SAVE_IMAGE};
+enum consoleMode { MODE_NO, LOAD_PALLETE, SAVE_PALLETE, LOAD_IMAGE, SAVE_IMAGE, IMAGE_SETTINGS};
 consoleMode currentConsoleMode = MODE_NO;
 
 int selector = 0;//selector para la consola
 
 bool stylusPressed = false;
-//botones
-typedef struct {
-    int x, y;
-    int w, h;
-    bool pressed;
-} Button;
 
 enum {
     ACTION_NONE      = 0,
@@ -119,7 +114,35 @@ typedef enum {
 
 ToolType currentTool = TOOL_BRUSH; // por defecto
 
+Keyboard *kbd = keyboardDemoInit();
+char text[16];
 
+char path[128];//ubicación del archivo
+
+void OnKeyPressed(int key) {
+if ( key < 0 ) return;
+    switch(key) {
+    case '\b':
+        if (selector > 0 ) {
+            selector--;
+            text[selector] = '\0';
+        }
+    break;
+    case '\n':
+    case '\r':
+        if (selector < 16)
+        {
+            text[selector++] = '\n';
+            text[selector] = '\0';           
+        }
+    default:
+        if (selector < 16)
+        {
+            text[selector++] = (char)key;
+            text[selector] = '\0';
+        }
+    }
+}
 //función para pasar de RAM a VRAM
 inline void submitVRAM()
 {
@@ -149,14 +172,14 @@ inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfa
     }
 }
 
-inline void drawGrid()
+inline void drawGrid(u16 color)
 {
     int separation = 1<<subSurfaceZoom;
     int rep = 128>>subSurfaceZoom;
     for(int i = 0; i < rep; i++)
     {
-        AVdrawHlineDMA(pixels,64,192,i*separation,C_WHITE);
-        AVdrawVline(pixels,0,128,64+(i*separation),C_WHITE);
+        AVdrawHlineDMA(pixels,64,192,i*separation,color);
+        AVdrawVline(pixels,0,128,64+(i*separation),color);
     }
 }
 
@@ -278,27 +301,6 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
 }
 
 //====================================================================Compatibilidad con modos gráficos====================================|
-
-inline void SubTextMode()
-{
-    if(currentSubMode == SUB_TEXT) return; // ya estamos en texto
-    currentSubMode = SUB_TEXT;
-
-    videoSetModeSub(MODE_0_2D);           // modo tile para texto
-    vramSetBankC(VRAM_C_SUB_BG);          // VRAM C asignada a fondos
-    consoleDemoInit();                     // inicializa consola de debug
-}
-
-inline void SubBitmapMode()
-{
-    if(currentSubMode == SUB_BITMAP) return; // ya estamos en bitmap
-    currentSubMode = SUB_BITMAP;
-
-    videoSetModeSub(MODE_5_2D);           // modo bitmap 16-bit
-    vramSetBankC(VRAM_C_SUB_BG);          // VRAM C asignada al bitmap
-    bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0); // fondo bitmap
-}
-
 inline void clearTopBitmap()
 {
     u8 r = 16;
@@ -319,6 +321,57 @@ inline void clearTopBitmap()
         _col = AVARGB(r,0,b);
         AVfillDMA(pixelsTopVRAM,j<<8,(((j+1)<<8)-1),_col);
     }
+}
+
+inline void SubTextMode()
+{
+    if(currentSubMode == SUB_TEXT) return; // ya estamos en texto
+    currentSubMode = SUB_TEXT;
+    //matamos ambas pantallas por que... why not :)
+
+    videoSetMode(MODE_0_2D);
+    vramSetBankA(VRAM_A_MAIN_BG);
+    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
+
+    // Pantalla inferior
+    videoSetModeSub(MODE_0_2D);
+    vramSetBankC(VRAM_C_SUB_BG);
+    consoleInit(&bottomConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
+}
+
+inline void bitmapMode()
+{
+    if(currentSubMode == SUB_BITMAP) return; // ya estamos en bitmap
+    currentSubMode = SUB_BITMAP;
+
+    videoSetMode(MODE_5_2D);
+    vramSetBankA(VRAM_A_MAIN_BG);
+    vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
+    bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+
+    videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
+    vramSetBankC(VRAM_C_SUB_BG);
+    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
+    bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+
+    clearTopBitmap();
+    submitVRAM();//recuperamos nuestros queridos datos
+}
+//============================================================= SD CARD ===============================================|
+bool saveArray(const char *path, void *array, size_t size) {
+    FILE *file = fopen(path, "wb");  // write binary
+    if (!file) return false;
+    fwrite(array, 1, size, file);
+    fclose(file);
+    return true;
+}
+
+bool loadArray(const char *path, void *array, size_t size) {
+    FILE *file = fopen(path, "rb");  // read binary
+    if (!file) return false;
+    fread(array, 1, size, file);
+    fclose(file);
+    return true;
 }
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys) {
@@ -345,14 +398,19 @@ inline int getActionsFromTouch(int button) {
         case 0: actions |= ACTION_ZOOM_IN; break;
         case 4: actions |= ACTION_ZOOM_OUT; break;
 
-        //no pongo código aquí porque va en otra parte
-        case 3:
+        case 3://cargar
             SubTextMode();
+            kbd->OnKeyPressed = OnKeyPressed;
+            //keyboardShow();
+            currentConsoleMode = LOAD_PALLETE;
         break;
-        case 7:
+        case 7://guardar
             SubTextMode();
+            kbd->OnKeyPressed = OnKeyPressed;
+            //keyboardShow();
+            currentConsoleMode = SAVE_PALLETE;
+
         break;
-        //UPDATE
     }
     return actions;
 }
@@ -379,6 +437,7 @@ inline void applyActions(int actions) {
         subSurfaceYoffset >>= 1;
     }
 }
+
 inline void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {//NECESITA SER ARREGLADO!
     if (oldColor == newColor) return;
     if (surface[(y << xres) + x] != oldColor) return;
@@ -431,68 +490,6 @@ inline void applyTool(int x, int y, bool dragging) {
             break;
     }
 }
-//=======================================================CONSOLA DE TEXTO==================================================================|
-#define MAX_FILES 256
-
-char* files[MAX_FILES];
-int fileCount = 0;
-FILE* currentFile = NULL;
-
-
-void saveFile(const char* path, const char* data, size_t length) {
-    FILE* f = fopen(path, "wb"); // write binary
-    if(!f) return; // error
-    fwrite(data, 1, length, f);
-    fclose(f);
-}
-
-
-void openFile(const char* path) {
-    if(currentFile) fclose(currentFile);  // cerrar si ya había otro abierto
-    currentFile = fopen(path, "rb");      // "rb" = read binary
-    if(!currentFile) {
-        // error al abrir
-    }
-}
-
-void openFolder(const char* path) {
-    DIR* dir = opendir(path);
-    if (!dir) return;
-
-    struct dirent* entry;
-    fileCount = 0;
-    while ((entry = readdir(dir)) != NULL && fileCount < MAX_FILES) {
-        files[fileCount] = strdup(entry->d_name);  // guarda el nombre
-        fileCount++;
-    }
-    closedir(dir);
-}
-
-void exitConsole()
-{
-
-}
-
-void consoleInput()
-{
-    if(keysDown() & KEY_DOWN)
-    {
-        if(selector > 0)selector--;
-    }
-    if(keysDown() & KEY_UP)
-    {
-        if(selector > 0)selector++;
-    }
-}
-
-void drawConsoleInfo() {
-    consoleClear();
-    for(int i=0; i<fileCount; i++) {
-        if(i == selector) iprintf("> %s\n", files[i]);
-        else iprintf("  %s\n", files[i]);
-    }
-}
-
 //====================================================================FPS==================================================================|
 int fps = 0;
 int frameCount = 0;
@@ -539,12 +536,12 @@ int main(void) {
     // Intentar montar la SD
     bool sd_ok = fatInitDefault();
 
-    if (!sd_ok) {
-        // poner pantalla inferior en modo texto temporal
-        videoSetModeSub(MODE_0_2D);
-        vramSetBankC(VRAM_C_SUB_BG);
-        consoleDemoInit();
+    // poner pantalla inferior en modo texto temporal
+    videoSetModeSub(MODE_0_2D);
+    vramSetBankC(VRAM_C_SUB_BG);
+    consoleDemoInit();
 
+    if (!sd_ok) {
         iprintf("\x1b[31m\n");//Rojo
 
         iprintf("ERROR: SD CARD NOT INITIATED.\n");
@@ -560,12 +557,7 @@ int main(void) {
                 swiWaitForVBlank();
             }
         }
-        // restaurar pantalla inferior a bitmap
-        videoSetModeSub(MODE_5_2D);
-        vramSetBankC(VRAM_C_SUB_BG);
-        bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
     }
-
 
     // --- Ahora cambiamos al modo bitmap normal ---
     videoSetMode(MODE_5_2D);
@@ -635,6 +627,10 @@ int main(void) {
                 {
                     updatePal(1, &palletePos);
                 }
+            }
+            if(keysDown() & KEY_L)
+            {
+                showGrid = !showGrid;
             }
             //===========================================PALETAS=========================================================
             palletePos = palletePos & (palleteSize-1);//mantiene la paleta dentro de un límite
@@ -732,10 +728,14 @@ int main(void) {
                     }
                     else//seleccionar un color en la paleta
                     {
-                        int row = (touch.py-64)>>2;
-                        int col = (touch.px-196)>>2;
+                        if(stylusPressed == false)
+                        {
+                            int row = (touch.py-64)>>2;
+                            int col = (touch.px-196)>>2;
 
-                        updatePal(((row<<4)+col)-palletePos,&palletePos);
+                            updatePal(((row<<4)+col)-palletePos,&palletePos);   
+                            stylusPressed = true;
+                        }
                     }
 
 
@@ -750,17 +750,72 @@ int main(void) {
                 applyActions(actions);
                 drawSurfaceBottom();
             }
+            if(showGrid)
+            {
+                drawGrid(AVinvertColor(pallete[palleteOffset]));
+            }
+            submitVRAM();
         }
         else//si estamos en modo consola de texto
         {
-            
+                //mostrar qué se está haciendo y revisar input
+                //consoleSelect(&topConsole);
+                swiWaitForVBlank();
+                consoleClear();
+
+                //keyboardUpdate(); // importante para mantener el teclado funcional
+
+                //u32 keys = keysDown();
+
+                if(keysDown() & KEY_B)
+                {
+                    bitmapMode();//simplemente salir de este menú
+                }
+
+                if(currentConsoleMode == SAVE_PALLETE)
+                {
+                    iprintf("Save file:\n");
+                    if(keysDown() & KEY_A)//se guarda el archivo
+                    {
+                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
+                        saveArray(path,pallete,256);//256 bytes
+                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
+                        saveArray(path,surface,128*128*2);
+                        bitmapMode();
+                    }
+                }
+                if(currentConsoleMode == LOAD_PALLETE)
+                {
+                    iprintf("Load file:\n");
+                    if(keysDown() & KEY_A)//se carga el archivo
+                    {
+                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
+                        loadArray(path,pallete,256);
+                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
+                        loadArray(path,surface,128*128*2);
+                        bitmapMode();
+                    }
+                }
+                if(keysDown() & KEY_UP && selector > 0)
+                {
+                    selector--;
+                }
+                if(keysDown() & KEY_DOWN)
+                {
+                    selector++;
+                }
+
+                //dibujar en la pantalla inferior
+                //iprintf("%s", text); // mostrar texto
+                iprintf("You have selected the option: %d",selector);
+                iprintf("\nPress A to do the action");
+                iprintf("\nPress B to go back");
         }
         
-        submitVRAM();
-        updateFPS();
-        //dibujar los FPS (penca lol)
-        AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
-        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
+        
+        //updateFPS();
+        //AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
+        //AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
     }
     return 0;
 }

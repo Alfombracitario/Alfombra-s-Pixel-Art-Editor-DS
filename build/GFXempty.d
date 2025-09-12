@@ -1,1 +1,0 @@
-GFXempty.o: GFXempty.s
