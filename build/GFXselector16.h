@@ -1,25 +1,25 @@
 
-//{{BLOCK(GFXselector24)
+//{{BLOCK(GFXselector16)
 
 //======================================================================
 //
-//	GFXselector24, 32x32@16, 
+//	GFXselector16, 16x16@16, 
 //	Transparent color : 00,00,00
 //	+ bitmap not compressed
-//	Total size: 2048 = 2048
+//	Total size: 512 = 512
 //
-//	Time-stamp: 2025-09-22, 17:33:19
+//	Time-stamp: 2025-09-22, 17:33:18
 //	Exported by Cearn's GBA Image Transmogrifier, v0.9.2
 //	( http://www.coranac.com/projects/#grit )
 //
 //======================================================================
 
-#ifndef GRIT_GFXSELECTOR24_H
-#define GRIT_GFXSELECTOR24_H
+#ifndef GRIT_GFXSELECTOR16_H
+#define GRIT_GFXSELECTOR16_H
 
-#define GFXselector24BitmapLen 2048
-extern const unsigned int GFXselector24Bitmap[512];
+#define GFXselector16BitmapLen 512
+extern const unsigned int GFXselector16Bitmap[128];
 
-#endif // GRIT_GFXSELECTOR24_H
+#endif // GRIT_GFXSELECTOR16_H
 
-//}}BLOCK(GFXselector24)
+//}}BLOCK(GFXselector16)

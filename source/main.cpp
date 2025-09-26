@@ -25,7 +25,8 @@
 
 #include "avdslib.h"
 #include "GFXinput.h"
-//#include "GFXselector24.h"
+#include "GFXselector24.h"
+#include "GFXselector16.h"
 
 #define SCREEN_W 256
 #define SCREEN_H 256
@@ -229,7 +230,7 @@ inline void updatePal(int increment, int *palletePos)
 //=========================================================DRAW SURFACE========================================================================
 
 //por algún motivo inline bajaba el rendimiento
-void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0) //no usamos sprites aún, ya que la info la copiaremos desde acá
+void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0)
 {
     int xres = 1<<xsize;   // ancho
     int yres = 1<<ysize;   // alto
@@ -300,6 +301,18 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
     }
 }
 
+void drawColorPalette()
+{
+    for(int i = 0; i < 16; i++)//vertical
+    {
+        for(int j = 0; j < 16; j++)//horizontal
+        {
+            //esto es muuy lento pero bueeno que se le va a hacer
+            AVdrawRectangle(pixels,192+(j<<2),4,64+(i<<2),4,pallete[(j<<4)+i]);
+
+        }
+    }
+}
 //====================================================================Compatibilidad con modos gráficos====================================|
 inline void clearTopBitmap()
 {
@@ -323,7 +336,7 @@ inline void clearTopBitmap()
     }
 }
 
-inline void SubTextMode()
+inline void textMode()
 {
     if(currentSubMode == SUB_TEXT) return; // ya estamos en texto
     currentSubMode = SUB_TEXT;
@@ -373,6 +386,201 @@ bool loadArray(const char *path, void *array, size_t size) {
     fclose(file);
     return true;
 }
+//gracias Zhennyak! (el hizo el código base para convertir a bmp, lo transformé para que sea compatible con el programa)
+
+void writeBmpHeader(FILE *f) {
+    // Cabecera BMP simple 16bpp sin compresión
+    unsigned char header[54] = {
+        'B','M',            // Firma
+        0,0,0,0,            // Tamaño del archivo (se rellena abajo)
+        0,0,0,0,            // Reservado
+        54,0,0,0,           // Offset datos (54 bytes de header)
+        40,0,0,0,           // Tamaño infoheader (40 bytes)
+        128,0,0,0,          // Ancho
+        128,0,0,0,          // Alto
+        1,0,                // Planos
+        16,0,               // Bits por pixel
+        3,0,0,0,            // Compresión BI_BITFIELDS (3 = usar masks)
+        0,0,0,0,            // Tamaño de imagen (se puede dejar 0)
+        0,0,0,0,            // Resolución X
+        0,0,0,0,            // Resolución Y
+        0,0,0,0,            // Colores usados
+        0,0,0,0             // Colores importantes
+    };
+
+    // Máscaras de color (para 16bpp RGB565)
+    unsigned int masks[3] = {
+        0xF800, // Rojo
+        0x07E0, // Verde
+        0x001F  // Azul
+    };
+
+    // Calcula tamaño total (header + pixeles)
+    int fileSize = 54 + 128 * 128 * 2 + 12; // +12 por masks
+    header[2] = (unsigned char)(fileSize);
+    header[3] = (unsigned char)(fileSize >> 8);
+    header[4] = (unsigned char)(fileSize >> 16);
+    header[5] = (unsigned char)(fileSize >> 24);
+
+    fwrite(header, 1, 54, f);
+    fwrite(masks, 4, 3, f); // Escribir las masks
+}
+
+// Guarda BMP usando paleta + surface en 16bpp directo
+void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* out = fopen(filename, "wb");
+    if(!out) {
+        return;
+    }
+
+    // Escribir cabecera BMP
+    writeBmpHeader(out);
+
+    // Escribir píxeles (desde abajo hacia arriba porque BMP lo requiere)
+    for(int y = 127; y >= 0; y--) {
+        for(int x = 0; x < 128; x++) {
+            uint16_t color = pallete[surface[(y<<7)+ x]];
+            
+            //reordenamos el color para poder escribirlo correctamente
+            //1555 ABGR
+            u8 b = color & 31;
+            u8 g = (color >> 5) & 31;
+            u8 r = (color >> 10) & 31;
+            color = (r<<10) | g | (b >>10) | 0x8000;
+            fwrite(&color, 2, 1, out);
+        }
+    }
+
+    fclose(out);
+}
+#pragma pack(push, 1) // asegurar alineación exacta
+typedef struct {
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint16_t bfReserved1;
+    uint16_t bfReserved2;
+    uint32_t bfOffBits;
+} BITMAPFILEHEADER;
+
+typedef struct {
+    uint32_t biSize;
+    int32_t  biWidth;
+    int32_t  biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
+    uint32_t biCompression;
+    uint32_t biSizeImage;
+    int32_t  biXPelsPerMeter;
+    int32_t  biYPelsPerMeter;
+    uint32_t biClrUsed;
+    uint32_t biClrImportant;
+} BITMAPINFOHEADER;
+#pragma pack(pop)
+void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* out = fopen(filename, "wb");
+    if(!out) return;
+
+    int width = 128, height = 128;
+    int numColors = 256; // máximo
+
+    // --- File header ---
+    BITMAPFILEHEADER fileHeader;
+    BITMAPINFOHEADER infoHeader;
+
+    int paletteSize = numColors * 4; // cada entrada es BGRA (4 bytes)
+    int pixelArraySize = width * height; // 1 byte por pixel
+    int fileSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize + pixelArraySize;
+
+    fileHeader.bfType = 0x4D42; // "BM"
+    fileHeader.bfSize = fileSize;
+    fileHeader.bfReserved1 = 0;
+    fileHeader.bfReserved2 = 0;
+    fileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize;
+
+    // --- Info header ---
+    infoHeader.biSize = sizeof(BITMAPINFOHEADER);
+    infoHeader.biWidth = width;
+    infoHeader.biHeight = height; // positivo = bottom-up
+    infoHeader.biPlanes = 1;
+    infoHeader.biBitCount = 8; // indexado
+    infoHeader.biCompression = 0;
+    infoHeader.biSizeImage = pixelArraySize;
+    infoHeader.biXPelsPerMeter = 2835;
+    infoHeader.biYPelsPerMeter = 2835;
+    infoHeader.biClrUsed = numColors;
+    infoHeader.biClrImportant = numColors;
+
+    fwrite(&fileHeader, sizeof(fileHeader), 1, out);
+    fwrite(&infoHeader, sizeof(infoHeader), 1, out);
+
+    // --- Paleta: convertir de ARGB1555 a BGRA8888 ---
+    for(int i=0; i<numColors; i++) {
+        uint16_t c = palette[i];
+        uint8_t a = (c & 0x8000) ? 255 : 0;
+        uint8_t r = (c & 0x1F)<<3;
+        uint8_t g = ((c >> 5)  & 0x1F)<<3;
+        uint8_t b = ((c >> 10)  & 0x1F)<<3;
+        uint8_t entry[4] = { b, g, r, a }; // BMP espera BGRA
+        fwrite(entry, 4, 1, out);
+    }
+
+    // --- Píxeles (índices), bottom-up ---
+    for(int y = height-1; y >= 0; y--) {
+        for(int x = 0; x < width; x++) {
+            uint8_t idx = (uint8_t)(surface[y*width + x] & 0xFF);
+            fwrite(&idx, 1, 1, out);
+        }
+    }
+
+    fclose(out);
+}
+int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* in = fopen(filename, "rb");
+    if(!in) return 0;
+
+    BITMAPFILEHEADER fileHeader;
+    BITMAPINFOHEADER infoHeader;
+
+    fread(&fileHeader, sizeof(fileHeader), 1, in);
+    fread(&infoHeader, sizeof(infoHeader), 1, in);
+
+    if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
+    if(infoHeader.biBitCount != 8) { fclose(in); return 0; } // solo 8bpp soportado
+
+    int width = infoHeader.biWidth;
+    int height = infoHeader.biHeight;
+    int numColors = infoHeader.biClrUsed ? infoHeader.biClrUsed : 256;
+
+    // Leer paleta (BGRA → ARGB1555)
+    for(int i=0; i<numColors; i++) {
+        uint8_t entry[4];
+        fread(entry, 4, 1, in);
+        uint8_t b = entry[0];
+        uint8_t g = entry[1];
+        uint8_t r = entry[2];
+        //uint8_t a = entry[3];   a nadie le importa el alpha :>
+        uint16_t c =
+            (r>>3) |
+            ((g>>3) << 5)  |
+            ((b>>3) << 10)  |
+            (0x8000);
+        palette[i] = c;
+    }
+
+    // Leer surface
+    fseek(in, fileHeader.bfOffBits, SEEK_SET);
+    for(int y = height-1; y >= 0; y--) {
+        for(int x = 0; x < width; x++) {
+            uint8_t idx;
+            fread(&idx, 1, 1, in);
+            surface[y*width + x] = idx;
+        }
+    }
+
+    fclose(in);
+    return 1;
+}
+
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys) {
     int actions = ACTION_NONE;
@@ -387,7 +595,7 @@ inline int getActionsFromKeys(int keys) {
     return actions;
 }
 
-inline int getActionsFromTouch(int button) {
+int getActionsFromTouch(int button) {
     int actions = ACTION_NONE;
 
     switch(button) {
@@ -399,13 +607,13 @@ inline int getActionsFromTouch(int button) {
         case 4: actions |= ACTION_ZOOM_OUT; break;
 
         case 3://cargar
-            SubTextMode();
+            textMode();
             kbd->OnKeyPressed = OnKeyPressed;
             //keyboardShow();
             currentConsoleMode = LOAD_PALLETE;
         break;
         case 7://guardar
-            SubTextMode();
+            textMode();
             kbd->OnKeyPressed = OnKeyPressed;
             //keyboardShow();
             currentConsoleMode = SAVE_PALLETE;
@@ -415,7 +623,7 @@ inline int getActionsFromTouch(int button) {
     return actions;
 }
 
-inline void applyActions(int actions) {
+void applyActions(int actions) {
     if(actions & ACTION_UP && subSurfaceYoffset > 0) {
         subSurfaceYoffset--;
     }
@@ -438,7 +646,7 @@ inline void applyActions(int actions) {
     }
 }
 
-inline void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {//NECESITA SER ARREGLADO!
+void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {//NECESITA SER ARREGLADO!
     if (oldColor == newColor) return;
     if (surface[(y << xres) + x] != oldColor) return;
 
@@ -463,7 +671,7 @@ inline void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, in
     }
 }
 
-inline void applyTool(int x, int y, bool dragging) {
+void applyTool(int x, int y, bool dragging) {
     switch (currentTool) {
         case TOOL_BRUSH:
             if (dragging) {
@@ -490,6 +698,23 @@ inline void applyTool(int x, int y, bool dragging) {
             break;
     }
 }
+
+//=========== Herramientas extras=========|
+void flipH()//de momento hace un flip de la pantalla entera para testear
+{
+    for(int j = 0; j < 1<<surfaceYres; j++)//copiamos inversamente
+    {
+        int y = j<<surfaceYres;
+        for(int i = 0; i < 1<<surfaceXres; i++)
+        {
+            stack[y+((1<<surfaceXres) - i)] = surface[i+y];
+        }
+    }
+    //ahora pegamos le contenido del stack 
+    dmaCopyHalfWords(3,stack, surface, 128*128*2);
+}
+
+
 //====================================================================FPS==================================================================|
 int fps = 0;
 int frameCount = 0;
@@ -559,6 +784,8 @@ int main(void) {
         }
     }
 
+    defaultExceptionHandler();// Mostrar crasheos
+
     // --- Ahora cambiamos al modo bitmap normal ---
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
@@ -582,6 +809,36 @@ int main(void) {
     oamClear(&oamMain, 0, 128);
     oamClear(&oamSub, 0, 128);
 
+    u16 *gfxSub = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector24Bitmap, gfxSub, GFXselector24BitmapLen);
+
+    oamSet(&oamSub, 0,
+        0, 16, // X, Y
+        0, // Priority
+        15, // Palette index, but it is the alpha value of bitmap sprites
+        SpriteSize_32x32, SpriteColorFormat_Bmp, // Size, format
+        gfxSub,  // Graphics offset
+        -1, // Affine index
+        false, // Double size
+        false, // Hide
+        false, false, // H flip, V flip
+        false); // Mosaic
+    
+    gfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector16Bitmap, gfxSub, GFXselector16BitmapLen);
+
+    oamSet(&oamSub, 1,
+        0, 0, // X, Y
+        0, // Priority
+        15, // Palette index, but it is the alpha value of bitmap sprites
+        SpriteSize_16x16, SpriteColorFormat_Bmp, // Size, format
+        gfxSub,  // Graphics offset
+        -1, // Affine index
+        false, // Double size
+        false, // Hide
+        false, false, // H flip, V flip
+        false); // Mosaic
+    
     //aquí está cómo obtener los offsets de main surface :)
     mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
     mainSurfaceYoffset = 96-((1<<surfaceYres)>>1);
@@ -672,13 +929,34 @@ int main(void) {
                     if(touch.px < 48 && touch.py > 16 && touch.py < 64 && stylusPressed == false)//herramientas
                     {
                         int col = touch.px > 24 ? 1 : 0;
-                        int row = touch.py > 32 ? 2 : 0;
+                        int row = touch.py > 40 ? 2 : 0;
                         //convertir col+row a un valor único
                         currentTool = (ToolType)(row + col);
 
                         //además dibujamos un contorno en dónde seleccionamos
-                        oamSetXY(&oamSub,6,(col*24)-12, (row)+16);//sprite 6 es el contorno 24x24
+                        oamSetXY(&oamSub,0,col*24, (row*12)+16);//sprite 0 es el contorno 24x24
                         stylusPressed = true;
+                    }
+                    else//apunta a otra parte de la izquierda
+                    {
+
+                        if(touch.py >= 64 && stylusPressed == false)//revisar botones inferiores
+                        {
+                            //hardcodeado porque lol
+                            int selected = touch.px>>4;
+                            switch(selected)
+                            {
+                                case 2:
+                                    //flipV
+                                break;
+                                case 3:
+                                    flipH();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);
+                                    drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+                                break;
+                            }
+                            stylusPressed = true;
+                        }
                     }
                 }
 
@@ -777,11 +1055,17 @@ int main(void) {
                     iprintf("Save file:\n");
                     if(keysDown() & KEY_A)//se guarda el archivo
                     {
-                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
-                        saveArray(path,pallete,256);//256 bytes
+                        /*sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
+                        saveArray(path,pallete,512);//512 bytes
                         sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
-                        saveArray(path,surface,128*128*2);
+                        saveArray(path,surface,32768);
+                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                        saveBMP(path, pallete, surface);//guarda un bmp extra por ahora :)
+                        */
+                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                        saveBMP_indexed(path,pallete,surface);
                         bitmapMode();
+                        
                     }
                 }
                 if(currentConsoleMode == LOAD_PALLETE)
@@ -789,10 +1073,13 @@ int main(void) {
                     iprintf("Load file:\n");
                     if(keysDown() & KEY_A)//se carga el archivo
                     {
-                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
+                        /*sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
                         loadArray(path,pallete,256);
                         sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
-                        loadArray(path,surface,128*128*2);
+                        loadArray(path,surface,32768);*/
+                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                        loadBMP_indexed(path,pallete,surface);
+                        drawColorPalette();
                         bitmapMode();
                     }
                 }
@@ -812,7 +1099,7 @@ int main(void) {
                 iprintf("\nPress B to go back");
         }
         
-        
+        oamUpdate(&oamSub);
         //updateFPS();
         //AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
         //AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
