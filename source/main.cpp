@@ -6,12 +6,12 @@
 /*
     To-Do list:
     No redibujar todo al pintar
-    Exportar e importar archivos/paletas
-    mejorar el zoom
-    Permitir bpp personalizados y resoluciones distintas
+    Permitir bpp personalizados y resoluciones distintas (TERMINAR DE ARREGLAR!)
     Poder cambiar el tamaño o tipo de pincel
+    mejorar el creador de colores
+    mejorar el sistema de guardado/cargado
+    terminar el resto de botones
 
-    Migrar el sistema usando sprites.
     (puede que a futuro añada más)
 
 */
@@ -35,7 +35,6 @@
 #define SURFACE_W 128
 #define SURFACE_H 256
 
-//Lujos de entender RGB: escribí esto sin testear
 #define C_WHITE 65535
 #define C_RED 32799
 #define C_YELLOW 33791
@@ -49,25 +48,27 @@
 static PrintConsole topConsole;
 static PrintConsole bottomConsole;
 
+//IWRAM, 32KB usados
+u16 surface[16384]__attribute__((section(".iwram"))); // 32 KB en IWRAM
+
+//RAM 360,960 bytes usados
 u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
-u16 pixelsTop[49152];
+u16 pixelsTop[49152];//copia en RAM (es más rápida)
 u16 pixels[49152];
-
-u16 surface[16384]__attribute__((section(".iwram"))); // 16 KB en IWRAM
-u16 pallete[256]__attribute__((section(".iwram"))); // 512 bytes en IWRAM
-
-//por temas de RAM, el máximo que puede medir una imagen es 128x192 que son 24kb aprox así puedo dejar 8kb a cosas random
+u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
-
 u16 backup[65536];//para undo/redo
 
+
+int stackSize = 16384;
+
 //palletas
-int palleteSize = 256;
-int palletePos = 0;
-int palleteBpp = 8;
-int palleteOffset = 0;//solo se usa en modos como 4bpp
+int paletteSize = 256;
+int palettePos = 0;
+int paletteBpp = 8;
+int paletteOffset = 0;//solo se usa en modos como 4bpp
 u8 palEdit[3];
 //otras variables
 int prevtpx = 0;
@@ -75,21 +76,25 @@ int prevtpy = 0;
 
 int mainSurfaceXoffset = 0;
 int mainSurfaceYoffset = 0;
-u8 subSurfaceXoffset = 0;
-u8 subSurfaceYoffset = 0;
-u8 subSurfaceZoom = 3;//8 veces más cerca
+int subSurfaceXoffset = 0;
+int subSurfaceYoffset = 0;
+int subSurfaceZoom = 3;// 8 veces más cerca
+int subSurfaceZoomYoffset = 0;
+int subSurfaceZoomXoffset = 0;
 
 //Solo acepto potencias de 2   >:3
-u8 surfaceXres = 7;
-u8 surfaceYres = 7;
+//máximo es 7
+int surfaceXres = 7;
+int surfaceYres = 7;
 
 bool showGrid = false;
+int gridSkips = 0;
 
 // Variables globales para controlar el modo actual
 enum subMode { SUB_TEXT, SUB_BITMAP };
 subMode currentSubMode = SUB_BITMAP;
 
-enum consoleMode { MODE_NO, LOAD_PALLETE, SAVE_PALLETE, LOAD_IMAGE, SAVE_IMAGE, IMAGE_SETTINGS};
+enum consoleMode { MODE_NO, LOAD_palette, SAVE_palette, LOAD_IMAGE, SAVE_IMAGE, IMAGE_SETTINGS};
 consoleMode currentConsoleMode = MODE_NO;
 
 int selector = 0;//selector para la consola
@@ -175,8 +180,8 @@ inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfa
 
 inline void drawGrid(u16 color)
 {
-    int separation = 1<<subSurfaceZoom;
-    int rep = 128>>subSurfaceZoom;
+    int separation = 1<<(subSurfaceZoom+gridSkips);//funciona
+    int rep = (128>>subSurfaceZoom)>>gridSkips;// no funciona
     for(int i = 0; i < rep; i++)
     {
         AVdrawHlineDMA(pixels,64,192,i*separation,color);
@@ -184,26 +189,49 @@ inline void drawGrid(u16 color)
     }
 }
 
-inline void updatePal(int increment, int *palletePos)
+inline void updatePal(int increment, int *palettePos)
 {
     //primero debemos saber si estamos en un rango válido
-    if(*palletePos + increment < 0 || *palletePos + increment > palleteSize)
+    if(paletteBpp == 4)
     {
-        return;
+        if(*palettePos + increment < 0)
+        {
+            *palettePos = 15;
+            if(paletteOffset > 0){paletteOffset--;}
+        }
+        if(*palettePos + increment + paletteOffset > paletteSize){
+            return;
+        }
+    }
+    else
+    {
+        if(*palettePos + increment < 0 || *palettePos + increment > paletteSize)
+        {
+            return;
+        }
     }
 
     //obtenemos la coordenada de la paleta
-    int posx = *palletePos & 15;
-    int posy = *palletePos >>4;
 
-    u16 _col = pallete[*palletePos];
+    int posx = *palettePos & 15;
+    int posy = *palettePos >>4;
+
+    if(paletteBpp == 4){posy = paletteOffset;}
+
+    u16 _col = palette[*palettePos];
 
     //reparamos el slot anterior
     AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,_col);
 
     //nueva información
-    *palletePos+=increment;
-    _col = pallete[*palletePos];
+    *palettePos+=increment;
+
+    if(paletteBpp == 4)
+    {
+        paletteOffset += *palettePos>>4;
+        *palettePos = *palettePos & 15;
+    }
+    _col = palette[*palettePos];
     //obtener cada color RGB
     u8 r = (_col & 31);
     u8 g = (_col & 992)>>5;
@@ -222,20 +250,21 @@ inline void updatePal(int increment, int *palletePos)
     AVdrawRectangle(pixels,192,64,32,8,_col);//rectángulo de arriba (color mezclado)
 
     //obtenemos la coordenada de la paleta (otra vez)
-    posx = *palletePos & 15;
-    posy = *palletePos >>4;
+    posx = *palettePos & 15;
+    posy = *palettePos >>4;
     AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
+
 }
 
 //=========================================================DRAW SURFACE========================================================================
 
 //por algún motivo inline bajaba el rendimiento
-void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0)
+void drawSurfaceMain(int xsize = 7,int ysize = 7)
 {
     int xres = 1<<xsize;   // ancho
     int yres = 1<<ysize;   // alto
 
-    if(palleteOffset == 0)
+    if(paletteOffset == 0)
     {
         for(int i = 0; i < yres; i++) // eje Y
         {
@@ -244,7 +273,7 @@ void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0)
 
             for(int j = 0; j < xres; j++) // eje X
             {
-                pixelsTop[y+j] = pallete[surface[_y+j]];
+                pixelsTop[y+j] = palette[surface[_y+j]];
             }
         }
     }
@@ -257,7 +286,7 @@ void drawSurfaceMain(int xsize = 7,int ysize = 7,int palleteOffset = 0)
 
             for(int j = 0; j < xres; j++) // eje X
             {
-                pixelsTop[y+j] = pallete[palleteOffset + surface[_y+j]];
+                pixelsTop[y+j] = palette[paletteOffset + surface[_y+j]];
             }
         }
     }
@@ -281,8 +310,8 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
     //calcular offsets y repeticiones
     int blockSize = 128 >> subSurfaceZoom;
     int yrepeat   = 1 << subSurfaceZoom;
-    int xoffset   = subSurfaceXoffset * blockSize;
-    int yoffset   = subSurfaceYoffset * blockSize;
+    int xoffset   = subSurfaceXoffset;
+    int yoffset   = subSurfaceYoffset;
 
     int dstY = 0;// fila destino
 
@@ -299,16 +328,17 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
             dstY++;
         }
     }
+    if(showGrid == true){drawGrid(AVinvertColor(palette[paletteOffset]));}
 }
 
-void drawColorPalette()
+void drawColorPalette()// optimizable (DMA)
 {
     for(int i = 0; i < 16; i++)//vertical
     {
         for(int j = 0; j < 16; j++)//horizontal
         {
             //esto es muuy lento pero bueeno que se le va a hacer
-            AVdrawRectangle(pixels,192+(j<<2),4,64+(i<<2),4,pallete[(j<<4)+i]);
+            AVdrawRectangle(pixels,192+(j<<2),4,64+(i<<2),4,palette[(i<<4)+j]);
 
         }
     }
@@ -439,7 +469,7 @@ void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
     // Escribir píxeles (desde abajo hacia arriba porque BMP lo requiere)
     for(int y = 127; y >= 0; y--) {
         for(int x = 0; x < 128; x++) {
-            uint16_t color = pallete[surface[(y<<7)+ x]];
+            uint16_t color = palette[surface[(y<<7)+ x]];
             
             //reordenamos el color para poder escribirlo correctamente
             //1555 ABGR
@@ -610,43 +640,52 @@ int getActionsFromTouch(int button) {
             textMode();
             kbd->OnKeyPressed = OnKeyPressed;
             //keyboardShow();
-            currentConsoleMode = LOAD_PALLETE;
+            currentConsoleMode = LOAD_palette;
         break;
         case 7://guardar
             textMode();
             kbd->OnKeyPressed = OnKeyPressed;
             //keyboardShow();
-            currentConsoleMode = SAVE_PALLETE;
+            currentConsoleMode = SAVE_palette;
 
         break;
     }
     return actions;
 }
 
-void applyActions(int actions) {
-    if(actions & ACTION_UP && subSurfaceYoffset > 0) {
-        subSurfaceYoffset--;
+void applyActions(int actions) {//acciones compartidas entre teclas y touch
+    int blockSize = (1 << surfaceXres) >> subSurfaceZoom;   // tamaño de bloque en píxeles según el zoom
+    if(keysHeld() & KEY_R) {
+        // --- Scroll por bloques ---
+        if(actions & ACTION_UP)    subSurfaceYoffset -= blockSize;
+        if(actions & ACTION_DOWN)  subSurfaceYoffset += blockSize;
+        if(actions & ACTION_LEFT)  subSurfaceXoffset -= blockSize;
+        if(actions & ACTION_RIGHT) subSurfaceXoffset += blockSize;
+
+        if(actions & ACTION_ZOOM_IN && gridSkips < surfaceXres) {gridSkips++;}
+        if(actions & ACTION_ZOOM_OUT && gridSkips > 0) {gridSkips--;}
     }
-    if(actions & ACTION_DOWN && subSurfaceYoffset < (1 << subSurfaceZoom) - 1) {
-        subSurfaceYoffset++;
+    else {
+        // --- Scroll por píxeles ---
+        if(actions & ACTION_UP)    subSurfaceYoffset--;
+        if(actions & ACTION_DOWN)  subSurfaceYoffset++;
+        if(actions & ACTION_LEFT)  subSurfaceXoffset--;
+        if(actions & ACTION_RIGHT) subSurfaceXoffset++;
+
+        if(actions & ACTION_ZOOM_IN) {subSurfaceZoom++;}
+        if(actions & ACTION_ZOOM_OUT && subSurfaceZoom > 0) {subSurfaceZoom--;}
     }
-    if(actions & ACTION_LEFT && subSurfaceXoffset > 0) {
-        subSurfaceXoffset--;
-    }
-    if(actions & ACTION_RIGHT && subSurfaceXoffset < (1 << subSurfaceZoom) - 1) {
-        subSurfaceXoffset++;
-    }
-    if(actions & ACTION_ZOOM_IN) {
-        subSurfaceZoom++;
-    }
-    if(actions & ACTION_ZOOM_OUT && subSurfaceZoom > 0) {
-        subSurfaceZoom--;
-        subSurfaceXoffset >>= 1;
-        subSurfaceYoffset >>= 1;
-    }
+    // --- Limitar dentro de la superficie ---
+    blockSize = (1 << surfaceXres) >> subSurfaceZoom;
+    int maxX      = (1 << surfaceXres) - blockSize;         // límite máximo en X
+    int maxY      = (1 << surfaceXres) - blockSize;         // límite máximo en Y
+    if(subSurfaceXoffset < 0)     subSurfaceXoffset = 0;
+    if(subSurfaceYoffset < 0)     subSurfaceYoffset = 0;
+    if(subSurfaceXoffset > maxX)  subSurfaceXoffset = maxX;
+    if(subSurfaceYoffset > maxY)  subSurfaceYoffset = maxY;
 }
 
-void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {//NECESITA SER ARREGLADO!
+void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {
     if (oldColor == newColor) return;
     if (surface[(y << xres) + x] != oldColor) return;
 
@@ -675,9 +714,9 @@ void applyTool(int x, int y, bool dragging) {
     switch (currentTool) {
         case TOOL_BRUSH:
             if (dragging) {
-                drawLineSurface(prevtpx, prevtpy, x, y, palletePos, surfaceXres);
+                drawLineSurface(prevtpx, prevtpy, x, y, palettePos, surfaceXres);
             } else {
-                surface[(y << surfaceXres) + x] = palletePos;
+                surface[(y << surfaceXres) + x] = palettePos;
             }
             break;
 
@@ -690,11 +729,11 @@ void applyTool(int x, int y, bool dragging) {
             break;
 
         case TOOL_PICKER: 
-            updatePal(surface[(y << surfaceXres) + x]-palletePos,&palletePos);
+            updatePal(surface[(y << surfaceXres) + x]-palettePos,&palettePos);
             break;
 
         case TOOL_BUCKET:
-            floodFill(surface, x, y, surface[(y << surfaceXres) + x], palletePos, surfaceXres, surfaceYres);
+            floodFill(surface, x, y, surface[(y << surfaceXres) + x], palettePos, surfaceXres, surfaceYres);
             break;
     }
 }
@@ -711,10 +750,13 @@ void flipH()//de momento hace un flip de la pantalla entera para testear
         }
     }
     //ahora pegamos le contenido del stack 
-    dmaCopyHalfWords(3,stack, surface, 128*128*2);
+    dmaCopyHalfWords(3,stack, surface, 2<<surfaceYres<<surfaceXres);
 }
 
+void flipV()
+{
 
+}
 //====================================================================FPS==================================================================|
 int fps = 0;
 int frameCount = 0;
@@ -744,10 +786,10 @@ int main(void) {
         surface[i] = 0;
         stack[i] = 0;
     }
-    for(int i = 1; i < palleteSize; i++) {
-        pallete[i] = C_BLACK;
+    for(int i = 1; i < paletteSize; i++) {
+        palette[i] = C_BLACK;
     }
-    for(int i = 0; i < 192*256; i++)
+    for(int i = 0; i < 49152; i++)
     {
         pixels[i] = 0;
         pixelsTop[i] = 0;
@@ -845,7 +887,7 @@ int main(void) {
 
     clearTopBitmap();
     //antes de entrar al loop iniciaré unos datos más por si acaso
-    updatePal(0, &palletePos);
+    updatePal(0, &palettePos);
     drawSurfaceBottom(surfaceXres, surfaceYres);
 
 
@@ -870,30 +912,30 @@ int main(void) {
             {
                 if(keysDown() & KEY_DOWN)
                 {
-                    updatePal(16, &palletePos);
+                    updatePal(16, &palettePos);
                 }
                 if(keysDown() & KEY_UP)
                 {
-                    updatePal(-16, &palletePos);
+                    updatePal(-16, &palettePos);
                 }
                 if(keysDown() & KEY_LEFT)
                 {
-                    updatePal(-1, &palletePos);
+                    updatePal(-1, &palettePos);
                 }
                 if(keysDown() & KEY_RIGHT)
                 {
-                    updatePal(1, &palletePos);
+                    updatePal(1, &palettePos);
                 }
             }
             if(keysDown() & KEY_L)
             {
                 showGrid = !showGrid;
+                drawSurfaceBottom(surfaceXres,surfaceYres);
             }
             //===========================================PALETAS=========================================================
-            palletePos = palletePos & (palleteSize-1);//mantiene la paleta dentro de un límite
-            if(palletePos < 0){palletePos = 0;}
+            palettePos = palettePos & (paletteSize-1);//mantiene la paleta dentro de un límite
+            if(palettePos < 0){palettePos = 0;}
             //recordar que debo hacer cambios dependiendo del bpp
-
 
             // leer touch
             touchPosition touch;
@@ -903,16 +945,14 @@ int main(void) {
             if (keysHeld() & KEY_TOUCH) {
                 if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X) && touch.py < (1 << surfaceYres)) {//apunta a la surface
 
-                    int shift     = subSurfaceZoom;
-                    int blockSize = (1 << surfaceXres) >> shift;
-                    int xfrom     = subSurfaceXoffset * blockSize;
-                    int yfrom     = subSurfaceYoffset * blockSize;
+                    int xfrom = subSurfaceXoffset;
+                    int yfrom = subSurfaceYoffset;
 
                     int localX = touch.px - SURFACE_X;
                     int localY = touch.py;
 
-                    int srcX = xfrom + (localX >> shift);
-                    int srcY = yfrom + (localY >> shift);
+                    int srcX = xfrom + (localX >> subSurfaceZoom);
+                    int srcY = yfrom + (localY >> subSurfaceZoom);
 
                     // --- ejecutar la herramienta seleccionada ---
                     applyTool(srcX, srcY, stylusPressed);
@@ -990,9 +1030,9 @@ int main(void) {
                         _col += palEdit[1]<<5;
                         _col += palEdit[2]<<10;
                         _col += 32768;//encender pixel
-                        pallete[palletePos] = _col;
+                        palette[palettePos] = _col;
                         //dibujar en la pantalla
-                        AVdrawRectangle(pixels,192+((palletePos & 15)<<2),4, 64+((palletePos>>4)<<2) ,4,_col);
+                        AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                         
                         drawSurfaceMain(surfaceXres, surfaceYres);
                         drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
@@ -1002,16 +1042,16 @@ int main(void) {
 
                         //dibujar el contorno del color seleccionado
                         _col = AVinvertColor(_col);
-                        AVdrawRectangleHollow(pixels,192+((palletePos & 15)<<2),4, 64+((palletePos>>4)<<2) ,4,_col);
+                        AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                     }
                     else//seleccionar un color en la paleta
                     {
                         if(stylusPressed == false)
                         {
                             int row = (touch.py-64)>>2;
-                            int col = (touch.px-196)>>2;
+                            int col = (touch.px-192)>>2;
 
-                            updatePal(((row<<4)+col)-palletePos,&palletePos);   
+                            updatePal(((row<<4)+col)-palettePos,&palettePos);   
                             stylusPressed = true;
                         }
                     }
@@ -1027,10 +1067,6 @@ int main(void) {
             if (actions != ACTION_NONE) {
                 applyActions(actions);
                 drawSurfaceBottom();
-            }
-            if(showGrid)
-            {
-                drawGrid(AVinvertColor(pallete[palleteOffset]));
             }
             submitVRAM();
         }
@@ -1050,37 +1086,38 @@ int main(void) {
                     bitmapMode();//simplemente salir de este menú
                 }
 
-                if(currentConsoleMode == SAVE_PALLETE)
+                if(currentConsoleMode == SAVE_palette)
                 {
                     iprintf("Save file:\n");
                     if(keysDown() & KEY_A)//se guarda el archivo
                     {
                         /*sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
-                        saveArray(path,pallete,512);//512 bytes
+                        saveArray(path,palette,512);//512 bytes
                         sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
                         saveArray(path,surface,32768);
                         sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                        saveBMP(path, pallete, surface);//guarda un bmp extra por ahora :)
+                        saveBMP(path, palette, surface);//guarda un bmp extra por ahora :)
                         */
                         sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                        saveBMP_indexed(path,pallete,surface);
+                        saveBMP_indexed(path,palette,surface);
                         bitmapMode();
-                        
                     }
                 }
-                if(currentConsoleMode == LOAD_PALLETE)
+                if(currentConsoleMode == LOAD_palette)
                 {
                     iprintf("Load file:\n");
                     if(keysDown() & KEY_A)//se carga el archivo
                     {
                         /*sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
-                        loadArray(path,pallete,256);
+                        loadArray(path,palette,256);
                         sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
                         loadArray(path,surface,32768);*/
                         sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                        loadBMP_indexed(path,pallete,surface);
-                        drawColorPalette();
+                        loadBMP_indexed(path,palette,surface);
                         bitmapMode();
+                        drawSurfaceBottom(surfaceXres,surfaceYres);
+                        drawSurfaceMain(surfaceXres,surfaceYres);
+                        drawColorPalette();
                     }
                 }
                 if(keysDown() & KEY_UP && selector > 0)
