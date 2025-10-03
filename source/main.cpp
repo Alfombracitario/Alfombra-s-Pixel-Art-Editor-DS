@@ -10,7 +10,7 @@
     Poder cambiar el tamaño o tipo de pincel
     mejorar el creador de colores
     mejorar el sistema de guardado/cargado
-    terminar el resto de botones
+    terminar el resto de botones (casi terminado!)
 
     (puede que a futuro añada más)
 
@@ -28,6 +28,8 @@
 #include "GFXselector24.h"
 #include "GFXselector16.h"
 
+//Macros
+
 #define SCREEN_W 256
 #define SCREEN_H 256
 #define SURFACE_X 64
@@ -44,6 +46,7 @@
 #define C_PURPLE 64543
 #define C_BLACK 32768
 #define C_GRAY 48623
+
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 static PrintConsole bottomConsole;
@@ -59,7 +62,7 @@ u16 pixels[49152];
 u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
-u16 backup[65536];//para undo/redo
+u16 backup[65536];//para undo/redo y cargar imagenes
 
 
 int stackSize = 16384;
@@ -68,9 +71,10 @@ int stackSize = 16384;
 int paletteSize = 256;
 int palettePos = 0;
 int paletteBpp = 8;
-int paletteOffset = 0;//solo se usa en modos como 4bpp
+int paletteOffset = 0;
 u8 palEdit[3];
 //otras variables
+int imgFormat = 0;
 int prevtpx = 0;
 int prevtpy = 0;
 
@@ -79,13 +83,15 @@ int mainSurfaceYoffset = 0;
 int subSurfaceXoffset = 0;
 int subSurfaceYoffset = 0;
 int subSurfaceZoom = 3;// 8 veces más cerca
-int subSurfaceZoomYoffset = 0;
-int subSurfaceZoomXoffset = 0;
+
 
 //Solo acepto potencias de 2   >:3
 //máximo es 7
 int surfaceXres = 7;
 int surfaceYres = 7;
+
+int stackYres = 7;
+int stackXres = 7;
 
 bool showGrid = false;
 int gridSkips = 0;
@@ -94,11 +100,14 @@ int gridSkips = 0;
 enum subMode { SUB_TEXT, SUB_BITMAP };
 subMode currentSubMode = SUB_BITMAP;
 
-enum consoleMode { MODE_NO, LOAD_palette, SAVE_palette, LOAD_IMAGE, SAVE_IMAGE, IMAGE_SETTINGS};
+enum consoleMode { MODE_NO, LOAD_palette, SAVE_palette, LOAD_IMAGE, SAVE_IMAGE, IMAGE_SETTINGS, MODE_NEWIMAGE};
 consoleMode currentConsoleMode = MODE_NO;
 
 int selector = 0;//selector para la consola
-
+int selectorA = 0;//selector secundario
+u32 kDown = 0;
+u32 kHeld = 0;
+u32 kUp = 0;
 bool stylusPressed = false;
 
 enum {
@@ -189,73 +198,6 @@ inline void drawGrid(u16 color)
     }
 }
 
-inline void updatePal(int increment, int *palettePos)
-{
-    //primero debemos saber si estamos en un rango válido
-    if(paletteBpp == 4)
-    {
-        if(*palettePos + increment < 0)
-        {
-            *palettePos = 15;
-            if(paletteOffset > 0){paletteOffset--;}
-        }
-        if(*palettePos + increment + paletteOffset > paletteSize){
-            return;
-        }
-    }
-    else
-    {
-        if(*palettePos + increment < 0 || *palettePos + increment > paletteSize)
-        {
-            return;
-        }
-    }
-
-    //obtenemos la coordenada de la paleta
-
-    int posx = *palettePos & 15;
-    int posy = *palettePos >>4;
-
-    if(paletteBpp == 4){posy = paletteOffset;}
-
-    u16 _col = palette[*palettePos];
-
-    //reparamos el slot anterior
-    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,_col);
-
-    //nueva información
-    *palettePos+=increment;
-
-    if(paletteBpp == 4)
-    {
-        paletteOffset += *palettePos>>4;
-        *palettePos = *palettePos & 15;
-    }
-    _col = palette[*palettePos];
-    //obtener cada color RGB
-    u8 r = (_col & 31);
-    u8 g = (_col & 992)>>5;
-    u8 b = (_col & 31744)>>10;
-    u8 _barColAmount[3] = {r, g, b};
-
-    //rectangulos de abajo
-    u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
-
-    for(int i = 0; i < 3; i++)
-    {
-        AVdrawRectangle(pixels,192,_barColAmount[i]<<1,(i<<3)+40,8,_barCol[i]);//barra de color
-        AVdrawRectangle(pixels,192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
-    }
-
-    AVdrawRectangle(pixels,192,64,32,8,_col);//rectángulo de arriba (color mezclado)
-
-    //obtenemos la coordenada de la paleta (otra vez)
-    posx = *palettePos & 15;
-    posy = *palettePos >>4;
-    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
-
-}
-
 //=========================================================DRAW SURFACE========================================================================
 
 //por algún motivo inline bajaba el rendimiento
@@ -342,6 +284,69 @@ void drawColorPalette()// optimizable (DMA)
 
         }
     }
+}
+//==================== PALETAS ==========|
+void updatePal(int increment, int *palettePos)
+{
+    //primero debemos saber si estamos en un rango válido
+    if(*palettePos + increment < 0 || *palettePos + increment > paletteSize)
+    {
+        return;
+    }
+    
+    //obtenemos la coordenada de la paleta
+    int posx = *palettePos & 15;
+    int posy = *palettePos >>4;
+
+    u16 _col = palette[*palettePos];
+
+    //reparamos el slot anterior
+    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,_col);
+
+    //nueva información
+    *palettePos+=increment;
+
+    //es necesario redibujar la pantalla?
+    
+
+    _col = palette[*palettePos];
+    //obtener cada color RGB
+    u8 r = (_col & 31);
+    u8 g = (_col & 992)>>5;
+    u8 b = (_col & 31744)>>10;
+    u8 _barColAmount[3] = {r, g, b};
+    for(int i = 0; i < 3; i++)palEdit[i] = _barColAmount[i];
+
+    //rectangulos de abajo
+    u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
+
+    for(int i = 0; i < 3; i++)
+    {
+        AVdrawRectangle(pixels,192,_barColAmount[i]<<1,(i<<3)+40,8,_barCol[i]);//barra de color
+        AVdrawRectangle(pixels,192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
+    }
+
+    AVdrawRectangle(pixels,192,64,32,8,_col);//rectángulo de arriba (color mezclado)
+
+    //obtenemos la coordenada de la paleta (otra vez)
+    posx = *palettePos & 15;
+    posy = *palettePos >>4;
+
+    if(paletteBpp != 8)
+    {
+        int prevOffset = paletteOffset;
+        if(paletteBpp == 4){
+            paletteOffset = posy<<4;
+        }
+        else if(paletteBpp == 2){
+            paletteOffset = (posy<<4)+((posx>>2)<<2);
+        }
+        if(prevOffset != paletteOffset){//se cambió la paleta, necesita actualizar la pantalla
+            drawSurfaceMain(surfaceXres,surfaceYres);
+            drawSurfaceBottom(surfaceXres,surfaceYres);
+        }
+    }
+    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
 }
 //====================================================================Compatibilidad con modos gráficos====================================|
 inline void clearTopBitmap()
@@ -655,7 +660,7 @@ int getActionsFromTouch(int button) {
 
 void applyActions(int actions) {//acciones compartidas entre teclas y touch
     int blockSize = (1 << surfaceXres) >> subSurfaceZoom;   // tamaño de bloque en píxeles según el zoom
-    if(keysHeld() & KEY_R) {
+    if(kHeld & KEY_R) {
         // --- Scroll por bloques ---
         if(actions & ACTION_UP)    subSurfaceYoffset -= blockSize;
         if(actions & ACTION_DOWN)  subSurfaceYoffset += blockSize;
@@ -685,7 +690,7 @@ void applyActions(int actions) {//acciones compartidas entre teclas y touch
     if(subSurfaceYoffset > maxY)  subSurfaceYoffset = maxY;
 }
 
-void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {
+void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {// NECESITA SER ARREGLADO (overflow)
     if (oldColor == newColor) return;
     if (surface[(y << xres) + x] != oldColor) return;
 
@@ -711,12 +716,13 @@ void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres,
 }
 
 void applyTool(int x, int y, bool dragging) {
+    u16 color = palettePos - paletteOffset;//lo limitamos al rango de bpp
     switch (currentTool) {
         case TOOL_BRUSH:
             if (dragging) {
-                drawLineSurface(prevtpx, prevtpy, x, y, palettePos, surfaceXres);
+                drawLineSurface(prevtpx, prevtpy, x, y, color, surfaceXres);
             } else {
-                surface[(y << surfaceXres) + x] = palettePos;
+                surface[(y << surfaceXres) + x] = color;
             }
             break;
 
@@ -729,33 +735,85 @@ void applyTool(int x, int y, bool dragging) {
             break;
 
         case TOOL_PICKER: 
-            updatePal(surface[(y << surfaceXres) + x]-palettePos,&palettePos);
+            updatePal(surface[(y << surfaceXres) + x]-color,&palettePos);
             break;
 
         case TOOL_BUCKET:
-            floodFill(surface, x, y, surface[(y << surfaceXres) + x], palettePos, surfaceXres, surfaceYres);
+            floodFill(surface, x, y, surface[(y << surfaceXres) + x], color, surfaceXres, surfaceYres);
             break;
     }
 }
+//========================================= Herramientas extras=====================|
+//copia en el stack una parte de la imagen
+void copyFromSurfaceToStack(int xsize, int ysize, int xoffset = 0, int yoffset = 0){//tamaño en potencias de 2, offsets en números reales
+    stackXres = xsize;
+    stackYres = ysize;
 
-//=========== Herramientas extras=========|
-void flipH()//de momento hace un flip de la pantalla entera para testear
-{
-    for(int j = 0; j < 1<<surfaceYres; j++)//copiamos inversamente
+    ysize = 1<<ysize;//pasar a valor real
+    xsize = 1<<xsize;
+    for(int i = 0; i < ysize; i++)//eje vertical
     {
-        int y = j<<surfaceYres;
-        for(int i = 0; i < 1<<surfaceXres; i++)
+        int y = i<<stackXres;
+        int _y = ((i+yoffset)<<surfaceXres)+xoffset;
+        for(int j = 0; j < xsize; j++)
         {
-            stack[y+((1<<surfaceXres) - i)] = surface[i+y];
+            stack[y+j]=surface[_y+j];
         }
     }
-    //ahora pegamos le contenido del stack 
-    dmaCopyHalfWords(3,stack, surface, 2<<surfaceYres<<surfaceXres);
+}
+
+void pasteFromStackToSurface(int xoffset = 0, int yoffset = 0)
+{
+    int ysize = 1 << stackYres;
+    int xsize = 1 << stackXres;
+
+    for(int i = 0; i < ysize; i++) // eje vertical
+    {
+        int y = (i << stackXres); // fila en el stack
+        int _y = ((i + yoffset) << surfaceXres) + xoffset; // fila en surface con offset
+
+        for(int j = 0; j < xsize; j++)
+        {
+            surface[_y + j] = stack[y + j];
+        }
+    }
+}
+
+void flipH()
+{
+    copyFromSurfaceToStack(surfaceXres-subSurfaceZoom, surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+    //copiar pero invertido
+    int ysize = 1 << stackYres;
+    int xsize = 1 << stackXres;
+
+    for(int i = 0; i < ysize; i++) // eje vertical
+    {
+        int y = ((i+1) << stackXres); // fila en el stack
+        int _y = ((i + subSurfaceYoffset) << surfaceXres) + subSurfaceXoffset; // fila en surface con offset
+
+        for(int j = 0; j < xsize; j++)
+        {
+            surface[_y + j] = stack[y - j];
+        }
+    }
 }
 
 void flipV()
 {
+    copyFromSurfaceToStack(surfaceXres-subSurfaceZoom, surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+    int ysize = 1 << stackYres;
+    int xsize = 1 << stackXres;
 
+    for(int i = 0; i < ysize; i++) // eje vertical
+    {
+        int y = (((ysize-1)-i) << stackXres); // fila en el stack
+        int _y = ((i + subSurfaceYoffset) << surfaceXres) + subSurfaceXoffset; // fila en surface con offset
+
+        for(int j = 0; j < xsize; j++)
+        {
+            surface[_y + j] = stack[y + j];
+        }
+    }
 }
 //====================================================================FPS==================================================================|
 int fps = 0;
@@ -777,16 +835,15 @@ void updateFPS() {
         lastTime = now;
     }
 }
-//====================================================================MAIN==================================================================================================================|
-int main(void) {
-
-    //lo primero, limpiar basura
+//=================================================================Inicialización===================================================================================|
+void initBitmap()
+{
     for(int i = 0; i < 16383; i++)
     {
         surface[i] = 0;
         stack[i] = 0;
     }
-    for(int i = 1; i < paletteSize; i++) {
+    for(int i = 0; i < paletteSize; i++) {
         palette[i] = C_BLACK;
     }
     for(int i = 0; i < 49152; i++)
@@ -796,6 +853,34 @@ int main(void) {
         pixelsTopVRAM[i] = 0;
         pixelsVRAM[i] = 0;
     }
+
+    videoSetMode(MODE_5_2D);
+    vramSetBankA(VRAM_A_MAIN_BG);
+    vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
+    bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+
+    videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
+    vramSetBankC(VRAM_C_SUB_BG);
+    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
+    bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+
+    // Cargar imagen inicial
+    decompress(GFXinputBitmap, BG_GFX_SUB, LZ77Vram);
+
+    // Transferir pixels a la RAM
+    dmaCopyHalfWords(3,pixelsVRAM,pixels , 49152 * sizeof(u16));
+
+    mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
+    mainSurfaceYoffset = 96-((1<<surfaceYres)>>1);
+
+    clearTopBitmap();
+
+    updatePal(0, &palettePos);
+    drawSurfaceBottom(surfaceXres, surfaceYres);
+}
+//====================================================================MAIN==================================================================================================================|
+int main(void) {
+
     initFPS();
     // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
     videoSetMode(MODE_0_2D);                // modo texto
@@ -827,107 +912,82 @@ int main(void) {
     }
 
     defaultExceptionHandler();// Mostrar crasheos
-
-    // --- Ahora cambiamos al modo bitmap normal ---
-    videoSetMode(MODE_5_2D);
-    vramSetBankA(VRAM_A_MAIN_BG);
-    vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
-    bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
-
-    videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
-    vramSetBankC(VRAM_C_SUB_BG);
-    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
-    bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
-
-    // Cargar imagen inicial
-    decompress(GFXinputBitmap, BG_GFX_SUB, LZ77Vram);
-
-    // Transferir pixels a la RAM
-    dmaCopyHalfWords(3,pixelsVRAM,pixels , 49152 * sizeof(u16));
-
+    initBitmap();
     //iniciamos el sprite para dibujar : )
-    oamInit(&oamMain, SpriteMapping_1D_128, false);
-    oamInit(&oamSub, SpriteMapping_1D_128, false);
+    oamInit(&oamMain, SpriteMapping_Bmp_1D_128, false);
+    oamInit(&oamSub, SpriteMapping_Bmp_1D_128, false);
+
     oamClear(&oamMain, 0, 128);
     oamClear(&oamSub, 0, 128);
 
-    u16 *gfxSub = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
-    dmaCopy(GFXselector24Bitmap, gfxSub, GFXselector24BitmapLen);
+    u16 *gfx32 = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector24Bitmap, gfx32, 32*32*2);
 
     oamSet(&oamSub, 0,
-        0, 16, // X, Y
-        0, // Priority
-        15, // Palette index, but it is the alpha value of bitmap sprites
-        SpriteSize_32x32, SpriteColorFormat_Bmp, // Size, format
-        gfxSub,  // Graphics offset
-        -1, // Affine index
-        false, // Double size
-        false, // Hide
-        false, false, // H flip, V flip
-        false); // Mosaic
-    
-    gfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
-    dmaCopy(GFXselector16Bitmap, gfxSub, GFXselector16BitmapLen);
+        0, 16,
+        0,
+        15, // opaco
+        SpriteSize_32x32, SpriteColorFormat_Bmp,
+        gfx32,
+        -1,
+        false, false, false, false, false);
+
+    u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
 
     oamSet(&oamSub, 1,
-        0, 0, // X, Y
-        0, // Priority
-        15, // Palette index, but it is the alpha value of bitmap sprites
-        SpriteSize_16x16, SpriteColorFormat_Bmp, // Size, format
-        gfxSub,  // Graphics offset
-        -1, // Affine index
-        false, // Double size
-        false, // Hide
-        false, false, // H flip, V flip
-        false); // Mosaic
-    
-    //aquí está cómo obtener los offsets de main surface :)
-    mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
-    mainSurfaceYoffset = 96-((1<<surfaceYres)>>1);
-
-    clearTopBitmap();
-    //antes de entrar al loop iniciaré unos datos más por si acaso
-    updatePal(0, &palettePos);
-    drawSurfaceBottom(surfaceXres, surfaceYres);
-
+        0, 0,
+        0,
+        15,
+        SpriteSize_16x16, SpriteColorFormat_Bmp,
+        gfx16,
+        -1,
+        false, false, false, false, false);
 
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
     while(pmMainLoop()) {
         swiWaitForVBlank();
         scanKeys();
+        kDown = keysDown();
+        kHeld = keysHeld();
+        kUp = keysUp();
+
+        touchPosition touch;
+        touchRead(&touch);
+
         //reiniciar algunos inputs
         int actions = ACTION_NONE;
 
         // salir con START
-        if(keysDown() & KEY_START) break;
+        if(kDown & KEY_START) break;
 
         // keys
         if(currentSubMode == SUB_BITMAP)
         {
-            if(keysHeld() & KEY_R)//zoom y offsets
+            if(kHeld & KEY_R)//zoom y offsets
             {
-                actions |= getActionsFromKeys(keysDown());
+                actions |= getActionsFromKeys(kDown);
             }
             else//paleta de colores
             {
-                if(keysDown() & KEY_DOWN)
+                if(kDown & KEY_DOWN)
                 {
                     updatePal(16, &palettePos);
                 }
-                if(keysDown() & KEY_UP)
+                if(kDown & KEY_UP)
                 {
                     updatePal(-16, &palettePos);
                 }
-                if(keysDown() & KEY_LEFT)
+                if(kDown & KEY_LEFT)
                 {
                     updatePal(-1, &palettePos);
                 }
-                if(keysDown() & KEY_RIGHT)
+                if(kDown & KEY_RIGHT)
                 {
                     updatePal(1, &palettePos);
                 }
             }
-            if(keysDown() & KEY_L)
+            if(kDown & KEY_L)
             {
                 showGrid = !showGrid;
                 drawSurfaceBottom(surfaceXres,surfaceYres);
@@ -937,32 +997,26 @@ int main(void) {
             if(palettePos < 0){palettePos = 0;}
             //recordar que debo hacer cambios dependiendo del bpp
 
-            // leer touch
-            touchPosition touch;
-            touchRead(&touch);
-            //PLACEHOLDER
-
-            if (keysHeld() & KEY_TOUCH) {
-                if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X) && touch.py < (1 << surfaceYres)) {//apunta a la surface
-
-                    int xfrom = subSurfaceXoffset;
-                    int yfrom = subSurfaceYoffset;
-
+            if (kHeld & KEY_TOUCH) {
+                if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//apunta a la surface
                     int localX = touch.px - SURFACE_X;
                     int localY = touch.py;
 
-                    int srcX = xfrom + (localX >> subSurfaceZoom);
-                    int srcY = yfrom + (localY >> subSurfaceZoom);
+                    int srcX = subSurfaceXoffset + (localX >> subSurfaceZoom);
+                    int srcY = subSurfaceYoffset + (localY >> subSurfaceZoom);
 
-                    // --- ejecutar la herramienta seleccionada ---
-                    applyTool(srcX, srcY, stylusPressed);
+                    if(srcY < 1<<surfaceYres)//comprobar si está en el rango
+                    {
+                        // --- ejecutar la herramienta seleccionada ---
+                        applyTool(srcX, srcY, stylusPressed);
 
-                    prevtpx = srcX;
-                    prevtpy = srcY;
+                        prevtpx = srcX;
+                        prevtpy = srcY;
 
-                    drawSurfaceMain(surfaceXres, surfaceYres);
-                    drawSurfaceBottom(surfaceXres, surfaceYres);
-                    stylusPressed = true;
+                        drawSurfaceMain(surfaceXres, surfaceYres);
+                        drawSurfaceBottom(surfaceXres, surfaceYres);
+                        stylusPressed = true;   
+                    }
                 }
                 if(touch.px < 64)//apunta a la parte izquierda
                 {
@@ -979,7 +1033,27 @@ int main(void) {
                     }
                     else//apunta a otra parte de la izquierda
                     {
-
+                        if(touch.py < 16 && stylusPressed == false){//asumamos que solo puedes crear nuevas imagenes, PLACEHOLDER
+                            textMode();
+                            currentConsoleMode = MODE_NEWIMAGE;
+                        }
+                        else if(touch.px >= 48 && touch.py < 64 && stylusPressed == false){//botones del costado derecho en la izquierda
+                            int selected = touch.py>>4;
+                            switch(selected)//puro hardcode lol
+                            {
+                                case 1://Copy
+                                    copyFromSurfaceToStack(surfaceXres-subSurfaceZoom,surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+                                break;
+                                case 2://cut
+                                break;
+                                case 3://Paste
+                                    pasteFromStackToSurface(subSurfaceXoffset, subSurfaceYoffset);
+                                    drawSurfaceMain(surfaceXres, surfaceYres);
+                                    drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+                                break;
+                            }
+                            stylusPressed = true;
+                        }
                         if(touch.py >= 64 && stylusPressed == false)//revisar botones inferiores
                         {
                             //hardcodeado porque lol
@@ -987,7 +1061,9 @@ int main(void) {
                             switch(selected)
                             {
                                 case 2:
-                                    //flipV
+                                    flipV();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);
+                                    drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
                                 break;
                                 case 3:
                                     flipH();
@@ -1070,7 +1146,7 @@ int main(void) {
             }
             submitVRAM();
         }
-        else//si estamos en modo consola de texto
+        else//<=======================================CONSOLA DE TEXTO=======================================>
         {
                 //mostrar qué se está haciendo y revisar input
                 //consoleSelect(&topConsole);
@@ -1079,61 +1155,73 @@ int main(void) {
 
                 //keyboardUpdate(); // importante para mantener el teclado funcional
 
-                //u32 keys = keysDown();
+                //u32 keys = kDown;
 
-                if(keysDown() & KEY_B)
+                if(kDown & KEY_B)
                 {
                     bitmapMode();//simplemente salir de este menú
                 }
+                if(currentConsoleMode == MODE_NEWIMAGE)
+                {
+                    int bpps[3]={2,4,8};
+                    iprintf("Create new file:\n");
+                    iprintf("Resolution: 128x128\n");
+                    iprintf("Colors:%d",1<<paletteBpp);
 
-                if(currentConsoleMode == SAVE_palette)
-                {
-                    iprintf("Save file:\n");
-                    if(keysDown() & KEY_A)//se guarda el archivo
+                    if(kDown & KEY_RIGHT)
                     {
-                        /*sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
-                        saveArray(path,palette,512);//512 bytes
-                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
-                        saveArray(path,surface,32768);
-                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                        saveBMP(path, palette, surface);//guarda un bmp extra por ahora :)
-                        */
-                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                        saveBMP_indexed(path,palette,surface);
-                        bitmapMode();
+                        selector++;
+                        if(selector > 2){selector = 0;}
+                        paletteBpp = bpps[selector];
                     }
-                }
-                if(currentConsoleMode == LOAD_palette)
-                {
-                    iprintf("Load file:\n");
-                    if(keysDown() & KEY_A)//se carga el archivo
+                    else if(kDown & KEY_LEFT)
                     {
-                        /*sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
-                        loadArray(path,palette,256);
-                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bin", selector);
-                        loadArray(path,surface,32768);*/
-                        sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                        loadBMP_indexed(path,palette,surface);
-                        bitmapMode();
-                        drawSurfaceBottom(surfaceXres,surfaceYres);
-                        drawSurfaceMain(surfaceXres,surfaceYres);
+                        selector--;
+                        if(selector < 0){selector = 2;}
+                        paletteBpp = bpps[selector];
+                    }
+                    if(kDown & KEY_A)
+                    {
+                        //se inicia un nuevo lienzo
+                        initBitmap();
+                        bitmapMode();//simplemente salir de este menú
                         drawColorPalette();
                     }
                 }
-                if(keysDown() & KEY_UP && selector > 0)
+                if(currentConsoleMode == SAVE_palette || currentConsoleMode == LOAD_palette)
                 {
-                    selector--;
-                }
-                if(keysDown() & KEY_DOWN)
-                {
-                    selector++;
-                }
+                    if(currentConsoleMode == SAVE_palette)
+                    {
+                        iprintf("Save file:\n");
+                        if(kDown & KEY_A)//se guarda el archivo
+                        {
+                            sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                            saveBMP_indexed(path,palette,surface);
+                            bitmapMode();
+                        }
+                    }
+                    else{
+                        iprintf("Load file:\n");
+                        if(kDown & KEY_A)//se carga el archivo
+                        {
+                            sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                            loadBMP_indexed(path,palette,surface);
+                            bitmapMode();
+                            drawSurfaceBottom(surfaceXres,surfaceYres);
+                            drawSurfaceMain(surfaceXres,surfaceYres);
+                            drawColorPalette();
+                        }
+                    }
+                    //general
+                    if(kDown & KEY_RIGHT){selectorA++;}
+                    if(kDown & KEY_LEFT){selectorA++;}
+                    if(kDown & KEY_UP && selector > 0){selector--;}
+                    if(kDown & KEY_DOWN){selector++;}
 
-                //dibujar en la pantalla inferior
-                //iprintf("%s", text); // mostrar texto
-                iprintf("You have selected the option: %d",selector);
-                iprintf("\nPress A to do the action");
-                iprintf("\nPress B to go back");
+                    iprintf("You have selected the option: %d",selector);
+                    iprintf("\nPress A to do the action");
+                    iprintf("\nPress B to go back");
+                }
         }
         
         oamUpdate(&oamSub);

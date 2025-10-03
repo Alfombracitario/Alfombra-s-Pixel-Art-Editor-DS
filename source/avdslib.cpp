@@ -23,8 +23,6 @@ void AVfillDMA(u16 *arr, int start, int end, u16 value) {
     dmaFillHalfWords(value, &arr[start], count << 1);  
 }
 
-
-
 //específico para dibujado
 void AVsetPixel(u16* arr, int x, int y, u16 color) {
     arr[(y<<8) + x] = color;
@@ -57,7 +55,6 @@ void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color
     }
 }
 
-
 void AVdrawRectangleHollow(u16* arr, int x, int width, int y, int height, u16 color) {
     int xlimit = x + width;
     int ylimit = y + height;
@@ -75,8 +72,7 @@ void AVdrawRectangleHollow(u16* arr, int x, int width, int y, int height, u16 co
     }
 }
 
-void AVdrawVline(u16* arr,int y0, int y1, int x, u16 color)
-{
+void AVdrawVline(u16* arr,int y0, int y1, int x, u16 color){
     y0 = (y0<<8)+x;
     y1 = (y1<<8)+x;
     for(int i = y0; i < y1; i+=256)
