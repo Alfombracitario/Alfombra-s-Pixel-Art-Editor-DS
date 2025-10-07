@@ -8,7 +8,7 @@
 @	+ bitmap not compressed
 @	Total size: 2048 = 2048
 @
-@	Time-stamp: 2025-10-02, 22:11:01
+@	Time-stamp: 2025-10-06, 18:59:52
 @	Exported by Cearn's GBA Image Transmogrifier, v0.9.2
 @	( http://www.coranac.com/projects/#grit )
 @

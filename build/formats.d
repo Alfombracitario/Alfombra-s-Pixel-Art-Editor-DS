@@ -1,5 +1,5 @@
-main.o: \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/main.cpp \
+formats.o: \
+ C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/formats.cpp \
  C:/devkitPro/libnds/include/nds.h C:/devkitPro/calico/include/calico.h \
  C:/devkitPro/calico/include/calico/types.h \
  C:/devkitPro/calico/include/calico/arm/psr.h \
@@ -111,13 +111,7 @@ main.o: \
  C:/devkitPro/libnds/include/nds/arm9/sprite.h \
  C:/devkitPro/libnds/include/nds/arm9/trig_lut.h \
  C:/devkitPro/libnds/include/nds/arm9/video.h \
- C:/devkitPro/libnds/include/nds/arm9/videoGL.h \
- C:/devkitPro/libnds/include/fat.h C:/devkitPro/libnds/include/dvm.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/avdslib.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/formats.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXinput.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector16.h
+ C:/devkitPro/libnds/include/nds/arm9/videoGL.h
 C:/devkitPro/libnds/include/nds.h:
 C:/devkitPro/calico/include/calico.h:
 C:/devkitPro/calico/include/calico/types.h:
@@ -231,10 +225,3 @@ C:/devkitPro/libnds/include/nds/arm9/sprite.h:
 C:/devkitPro/libnds/include/nds/arm9/trig_lut.h:
 C:/devkitPro/libnds/include/nds/arm9/video.h:
 C:/devkitPro/libnds/include/nds/arm9/videoGL.h:
-C:/devkitPro/libnds/include/fat.h:
-C:/devkitPro/libnds/include/dvm.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/avdslib.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/formats.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXinput.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h:
-C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector16.h:

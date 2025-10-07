@@ -24,6 +24,7 @@
 #include <dirent.h>
 
 #include "avdslib.h"
+#include "formats.h"
 #include "GFXinput.h"
 #include "GFXselector24.h"
 #include "GFXselector16.h"
@@ -36,6 +37,7 @@
 #define SURFACE_Y 0
 #define SURFACE_W 128
 #define SURFACE_H 256
+#define BACKUP_MAX 8
 
 #define C_WHITE 65535
 #define C_RED 32799
@@ -62,8 +64,11 @@ u16 pixels[49152];
 u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
-u16 backup[65536];//para undo/redo y cargar imagenes
+u16 backup[131072];//para undo/redo y cargar imagenes 256kb
 
+int backupIndex = -1;       // índice del último frame guardado
+int oldestBackup = 0;       // límite inferior (el frame más antiguo que aún es válido)
+int totalBackups = 0;       // cuántos backups se han llenado realmente
 
 int stackSize = 16384;
 
@@ -100,7 +105,7 @@ int gridSkips = 0;
 enum subMode { SUB_TEXT, SUB_BITMAP };
 subMode currentSubMode = SUB_BITMAP;
 
-enum consoleMode { MODE_NO, LOAD_palette, SAVE_palette, LOAD_IMAGE, SAVE_IMAGE, IMAGE_SETTINGS, MODE_NEWIMAGE};
+enum consoleMode { MODE_NO, LOAD_file, SAVE_file, IMAGE_SETTINGS, MODE_NEWIMAGE};
 consoleMode currentConsoleMode = MODE_NO;
 
 int selector = 0;//selector para la consola
@@ -163,11 +168,11 @@ inline void submitVRAM()
 {
     // Transferir pixelsTop a VRAM principal
     int offset = (mainSurfaceYoffset<<8)+mainSurfaceXoffset;
-    int size = (1 << surfaceXres) << surfaceYres;
-    dmaCopyHalfWords(3,pixelsTop+offset, pixelsTopVRAM+offset, size<<2);//solo copia la pantalla
+    int size = 512 << surfaceYres;//por más que la surface tenga una medida, copiamos toda la línea de la pantalla para ahorrar calls
+    dmaCopyHalfWords(3,pixelsTop+offset, pixelsTopVRAM+offset, size);//solo copia la pantalla
 
     // Transferir pixels a VRAM secundaria
-    dmaCopyHalfWords(3,pixels, pixelsVRAM, 49152 * sizeof(u16));
+    dmaCopyHalfWords(3,pixels, pixelsVRAM, 98304);
 }
 inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
     int dx = abs(x1 - x0);
@@ -279,9 +284,9 @@ void drawColorPalette()// optimizable (DMA)
     {
         for(int j = 0; j < 16; j++)//horizontal
         {
-            //esto es muuy lento pero bueeno que se le va a hacer
+            //esto es muuy lento pero bueeno que se le va a hacer... optimizarlo!
             AVdrawRectangle(pixels,192+(j<<2),4,64+(i<<2),4,palette[(i<<4)+j]);
-
+            
         }
     }
 }
@@ -289,8 +294,7 @@ void drawColorPalette()// optimizable (DMA)
 void updatePal(int increment, int *palettePos)
 {
     //primero debemos saber si estamos en un rango válido
-    if(*palettePos + increment < 0 || *palettePos + increment > paletteSize)
-    {
+    if(*palettePos + increment < 0 || *palettePos + increment > paletteSize){
         return;
     }
     
@@ -305,9 +309,6 @@ void updatePal(int increment, int *palettePos)
 
     //nueva información
     *palettePos+=increment;
-
-    //es necesario redibujar la pantalla?
-    
 
     _col = palette[*palettePos];
     //obtener cada color RGB
@@ -645,13 +646,13 @@ int getActionsFromTouch(int button) {
             textMode();
             kbd->OnKeyPressed = OnKeyPressed;
             //keyboardShow();
-            currentConsoleMode = LOAD_palette;
+            currentConsoleMode = LOAD_file;
         break;
         case 7://guardar
             textMode();
             kbd->OnKeyPressed = OnKeyPressed;
             //keyboardShow();
-            currentConsoleMode = SAVE_palette;
+            currentConsoleMode = SAVE_file;
 
         break;
     }
@@ -779,25 +780,25 @@ void pasteFromStackToSurface(int xoffset = 0, int yoffset = 0)
     }
 }
 
-void flipH()
-{
-    copyFromSurfaceToStack(surfaceXres-subSurfaceZoom, surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
-    //copiar pero invertido
+void flipH() {
+    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom, surfaceYres - subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+
     int ysize = 1 << stackYres;
     int xsize = 1 << stackXres;
 
-    for(int i = 0; i < ysize; i++) // eje vertical
+    for (int i = 0; i < ysize; i++) // eje vertical
     {
-        int y = ((i+1) << stackXres); // fila en el stack
+        int y = (i << stackXres); // fila en el stack
         int _y = ((i + subSurfaceYoffset) << surfaceXres) + subSurfaceXoffset; // fila en surface con offset
 
-        for(int j = 0; j < xsize; j++)
+        for (int j = 0; j < xsize; j++)
         {
-            surface[_y + j] = stack[y - j];
+            surface[_y + j] = stack[y + (xsize - 1 - j)];
         }
     }
 }
 
+ 
 void flipV()
 {
     copyFromSurfaceToStack(surfaceXres-subSurfaceZoom, surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
@@ -878,6 +879,41 @@ void initBitmap()
     updatePal(0, &palettePos);
     drawSurfaceBottom(surfaceXres, surfaceYres);
 }
+//================Backups========================|
+void pushBackup(void) {
+    backupIndex = (backupIndex + 1) & (BACKUP_MAX - 1);
+    u16 *dst = backup + backupIndex * stackSize;// Dirección destino en backup
+    // Copiar surface actual
+    dmaCopyHalfWords(3, surface, dst, stackSize * sizeof(u16));
+
+    if (totalBackups < BACKUP_MAX) totalBackups++;
+    // Si llenamos todo, el más antiguo avanza
+    if (totalBackups == BACKUP_MAX)
+        oldestBackup = (oldestBackup + 1) & (BACKUP_MAX - 1);
+}
+// Obtener puntero al respaldo con un índice relativo
+// offset = 0 → más reciente, 1 → anterior, etc.
+void loadBackup(void) {
+    // No retroceder si no hay backups
+    if (totalBackups == 0) return;
+
+    // Calcular índice anterior
+    int previousIndex = (backupIndex - 1) & (BACKUP_MAX - 1);
+
+    // Si retroceder nos llevaría al más antiguo que ya es inválido, detener
+    if (previousIndex == oldestBackup) {
+        // Llegaste al límite más antiguo permitido
+        return;
+    }
+
+    // Cargar backup anterior en surface (DMA)
+    u16 *src = backup + previousIndex * stackSize;
+    dmaCopyHalfWords(3, src, surface, stackSize * sizeof(u16));
+
+    // Retroceder índice actual
+    backupIndex = previousIndex;
+}
+
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
 
@@ -1146,7 +1182,7 @@ int main(void) {
             }
             submitVRAM();
         }
-        else//<=======================================CONSOLA DE TEXTO=======================================>
+        else//=======================================CONSOLA DE TEXTO=======================================>
         {
                 //mostrar qué se está haciendo y revisar input
                 //consoleSelect(&topConsole);
@@ -1188,15 +1224,32 @@ int main(void) {
                         drawColorPalette();
                     }
                 }
-                if(currentConsoleMode == SAVE_palette || currentConsoleMode == LOAD_palette)
+                if(currentConsoleMode == SAVE_file || currentConsoleMode == LOAD_file)
                 {
-                    if(currentConsoleMode == SAVE_palette)
+                    if(currentConsoleMode == SAVE_file)
                     {
                         iprintf("Save file:\n");
                         if(kDown & KEY_A)//se guarda el archivo
                         {
                             sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                            saveBMP_indexed(path,palette,surface);
+                            switch(selectorA)
+                            {
+                                default:
+                                    iprintf("\nNot supported!");
+                                break;
+                                case 0://bmp direct
+                                    saveBMP(path,palette,surface);//Gracias Zhennyak!
+                                break;
+
+                                case 1://bmp indexed
+                                    saveBMP_indexed(path,palette,surface);
+                                break;
+
+                                case 3://NES
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
+                                    exportNES(path,surface,1<<surfaceYres);
+                                break;
+                            }
                             bitmapMode();
                         }
                     }
@@ -1205,7 +1258,32 @@ int main(void) {
                         if(kDown & KEY_A)//se carga el archivo
                         {
                             sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
-                            loadBMP_indexed(path,palette,surface);
+                            switch(selectorA)
+                            {
+                                default:
+                                    iprintf("\nNot supported!");
+                                break;
+                                case 1://bmp indexed
+                                    loadBMP_indexed(path,palette,surface);
+                                break;
+
+                                case 3://NES
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
+                                    importNES(path,surface);
+                                    paletteBpp = 2;
+                                break;
+
+                                case 4://SNES
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.bin", selector);
+                                    importSNES(path,surface);
+                                    paletteBpp = 4;
+                                break;
+
+                                case 8://PAL
+                                    importPal(path);
+                                break;
+
+                            }
                             bitmapMode();
                             drawSurfaceBottom(surfaceXres,surfaceYres);
                             drawSurfaceMain(surfaceXres,surfaceYres);
@@ -1213,13 +1291,23 @@ int main(void) {
                         }
                     }
                     //general
-                    if(kDown & KEY_RIGHT){selectorA++;}
-                    if(kDown & KEY_LEFT){selectorA++;}
+                    if(kDown & KEY_RIGHT && selectorA < 7){selectorA++;}
+                    if(kDown & KEY_LEFT && selectorA > 0){selectorA--;}
                     if(kDown & KEY_UP && selector > 0){selector--;}
                     if(kDown & KEY_DOWN){selector++;}
-
+                    char texts[8][32] = {
+                        ".bmp direct",
+                        ".bmp 8bpp",
+                        ".bmp 4bpp [NW]",
+                        "NES",
+                        "SNES",
+                        "GBA [NW]",
+                        ".acs [NW]",
+                        ".pal"
+                    };
                     iprintf("You have selected the option: %d",selector);
-                    iprintf("\nPress A to do the action");
+                    iprintf("\nCurrent format: %s",texts[selectorA]);
+                    iprintf("\n\nPress A to do the action");
                     iprintf("\nPress B to go back");
                 }
         }
