@@ -20,7 +20,7 @@ void AVsetPixel(u16* arr, int x, int y, u16 color);
 u16 AVreadPixel(u16* arr, int x, int y);
 
 void AVdrawRectangle(u16* arr, int x, int width, int y, int height, u16 color);
-void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color);
+void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color,int arrayXres = 0);
 void AVdrawRectangleHollow(u16* arr, int x, int width, int y, int height, u16 color);
 
 void AVdrawVline(u16* arr, int y0, int y1, int x, u16 color);

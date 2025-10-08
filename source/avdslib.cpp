@@ -46,11 +46,11 @@ void AVdrawRectangle(u16* arr, int x,int width, int y,int height, u16 color){
     }
 }
 
-void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color) {
+void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color,int arrayXres = 8) {
     int xto = x + width;
     height += y;
     for (int i = y; i < height; i++) {
-        int _i = i << 8;
+        int _i = i << arrayXres;
         dmaFillHalfWords(color, &arr[_i + x], (xto - x) << 1);
     }
 }

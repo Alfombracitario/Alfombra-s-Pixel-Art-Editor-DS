@@ -642,17 +642,11 @@ int getActionsFromTouch(int button) {
         case 0: actions |= ACTION_ZOOM_IN; break;
         case 4: actions |= ACTION_ZOOM_OUT; break;
 
-        case 3://cargar
-            textMode();
-            kbd->OnKeyPressed = OnKeyPressed;
-            //keyboardShow();
-            currentConsoleMode = LOAD_file;
+        case 3://showGrid
+            showGrid = !showGrid;
+            drawSurfaceBottom(surfaceXres,surfaceYres);
         break;
-        case 7://guardar
-            textMode();
-            kbd->OnKeyPressed = OnKeyPressed;
-            //keyboardShow();
-            currentConsoleMode = SAVE_file;
+        case 7://unused
 
         break;
     }
@@ -737,6 +731,8 @@ void applyTool(int x, int y, bool dragging) {
 
         case TOOL_PICKER: 
             updatePal(surface[(y << surfaceXres) + x]-color,&palettePos);
+            currentTool = TOOL_BRUSH;
+            oamSetXY(&oamSub,0,0,16);
             break;
 
         case TOOL_BUCKET:
@@ -746,21 +742,34 @@ void applyTool(int x, int y, bool dragging) {
 }
 //========================================= Herramientas extras=====================|
 //copia en el stack una parte de la imagen
-void copyFromSurfaceToStack(int xsize, int ysize, int xoffset = 0, int yoffset = 0){//tamaño en potencias de 2, offsets en números reales
+void copyFromSurfaceToStack(int xsize, int ysize, int xoffset = 0, int yoffset = 0) {
     stackXres = xsize;
     stackYres = ysize;
 
-    ysize = 1<<ysize;//pasar a valor real
-    xsize = 1<<xsize;
-    for(int i = 0; i < ysize; i++)//eje vertical
-    {
-        int y = i<<stackXres;
-        int _y = ((i+yoffset)<<surfaceXres)+xoffset;
-        for(int j = 0; j < xsize; j++)
-        {
-            stack[y+j]=surface[_y+j];
-        }
+    // Convertir a valores reales
+    int stackW = 1 << xsize;
+    int stackH = 1 << ysize;
+    int surfaceW = 1 << surfaceXres;
+
+    u16* dst = stack;
+    u16* src = surface + (yoffset * surfaceW + xoffset);
+
+    for (int y = 0; y < stackH; ++y) {
+        // Copia una fila entera
+        memcpy(dst, src, stackW * sizeof(u16));
+
+        // Avanzar una fila en ambos
+        dst += stackW;
+        src += surfaceW;
     }
+}
+void cutFromSurfaceToStack(int xsize, int ysize, int xoffset = 0, int yoffset = 0){
+    //copia pero limpia un fragmento de la pantalla
+    //en vez de optimizar esto, lo haré de la manera más simple posible lol
+    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom, surfaceYres - subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+    //limpiar la pantalla
+    int blockSize = 128 >> subSurfaceZoom;
+    AVdrawRectangleDMA(surface,subSurfaceXoffset,blockSize,subSurfaceYoffset,blockSize,0,surfaceXres);
 }
 
 void pasteFromStackToSurface(int xoffset = 0, int yoffset = 0)
@@ -816,6 +825,99 @@ void flipV()
         }
     }
 }
+
+void scaleUp(){
+    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom,
+                           surfaceYres - subSurfaceZoom,
+                           subSurfaceXoffset,
+                           subSurfaceYoffset);
+
+    int stackW = 1 << stackXres;
+    int stackH = 1 << stackYres;
+
+    for(int sy = 0; sy < stackH; ++sy){
+        int srcBase = sy * stackW;
+
+        // dos filas destino correspondientes a esta fila fuente
+        int dstRow0 = ((sy<<1) + subSurfaceYoffset) << surfaceXres;
+        int dstRow1 = (((sy<<1) + 1) + subSurfaceYoffset) << surfaceXres;
+
+        for(int sx = 0; sx < stackW; ++sx){
+            u16 pix = stack[srcBase + sx];
+            int dstCol = (sx<<1) + subSurfaceXoffset;
+
+            // escribir 2x2
+            surface[dstRow0 + dstCol]     = pix;
+            surface[dstRow0 + dstCol + 1] = pix;
+            surface[dstRow1 + dstCol]     = pix;
+            surface[dstRow1 + dstCol + 1] = pix;
+        }
+    }
+}
+
+
+void scaleDown(){
+    cutFromSurfaceToStack(surfaceXres - subSurfaceZoom,
+                           surfaceYres - subSurfaceZoom,
+                           subSurfaceXoffset,
+                           subSurfaceYoffset);
+
+    //lee el stack saltandose un pixel
+    int yres = (1<<stackYres)>>1;
+    int xres = (1<<stackXres)>>1;
+    int baseOffset = subSurfaceXoffset+(subSurfaceYoffset<<surfaceXres);
+    int _y = 0; int offset = 0;
+
+    for(int y = 0; y < yres; y++){
+        //precalcular algunas cosas
+        offset = (y<<surfaceXres)+baseOffset;
+        _y = (y << 1) << stackXres;
+
+        for(int x = 0; x < xres; x++){//dibujar
+            surface[offset+x] = stack[_y+(x<<1)];
+        }
+    }
+}
+
+void rotatePositive() { // 90° Antihorario
+    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom,
+                           surfaceYres - subSurfaceZoom,
+                           subSurfaceXoffset,
+                           subSurfaceYoffset);
+
+    int size = 1 << stackXres;
+    int baseOffset = subSurfaceXoffset + (subSurfaceYoffset << surfaceXres);
+
+    for (int y = 0; y < size; y++) {
+        int destOffset = baseOffset + (y << surfaceXres);
+        for (int x = 0; x < size; x++) {
+            // (x, y) → (y, size-1-x)
+            surface[destOffset + x] = stack[((size - 1 - x) << stackXres) + y];
+        }
+    }
+}
+
+
+void rotateNegative() { // 90° Horario
+    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom,
+                           surfaceYres - subSurfaceZoom,
+                           subSurfaceXoffset,
+                           subSurfaceYoffset);
+
+    int size = 1 << stackXres;
+    int baseOffset = subSurfaceXoffset + (subSurfaceYoffset << surfaceXres);
+
+    // Para rotar horario, leer desde cuadrante "inferior" hacia la derecha
+    for (int y = 0; y < size; y++) {
+        int destOffset = baseOffset + (y << surfaceXres);
+        for (int x = 0; x < size; x++) {
+            // leer desde cuadrante rotado (x, y) → (size-1-y, x)
+            surface[destOffset + x] = stack[(x << stackXres) + (size - 1 - y)];
+        }
+    }
+}
+
+
 //====================================================================FPS==================================================================|
 int fps = 0;
 int frameCount = 0;
@@ -1069,9 +1171,31 @@ int main(void) {
                     }
                     else//apunta a otra parte de la izquierda
                     {
-                        if(touch.py < 16 && stylusPressed == false){//asumamos que solo puedes crear nuevas imagenes, PLACEHOLDER
-                            textMode();
-                            currentConsoleMode = MODE_NEWIMAGE;
+                        if(touch.py < 16 && stylusPressed == false){//iconos de la parte superior
+                            int selected = touch.px>>4;
+                            switch(selected)
+                            {
+                                case 0: //load file
+                                    textMode();
+                                    kbd->OnKeyPressed = OnKeyPressed;
+                                    //keyboardShow();
+                                    currentConsoleMode = LOAD_file;
+                                break;
+
+                                case 1: //New file
+                                    textMode();
+                                    currentConsoleMode = MODE_NEWIMAGE;
+                                break;
+
+                                case 2:// Save file
+                                    textMode();
+                                    kbd->OnKeyPressed = OnKeyPressed;
+                                    //keyboardShow();
+                                    currentConsoleMode = SAVE_file;
+                                break;
+
+                                //PLACEHOLDER el caso 3 está libre por ahora :> (pienso usarlo para configuración en un futuro)
+                            }
                         }
                         else if(touch.px >= 48 && touch.py < 64 && stylusPressed == false){//botones del costado derecho en la izquierda
                             int selected = touch.py>>4;
@@ -1081,11 +1205,12 @@ int main(void) {
                                     copyFromSurfaceToStack(surfaceXres-subSurfaceZoom,surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
                                 break;
                                 case 2://cut
+                                    cutFromSurfaceToStack(surfaceXres-subSurfaceZoom,surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
                                 case 3://Paste
                                     pasteFromStackToSurface(subSurfaceXoffset, subSurfaceYoffset);
-                                    drawSurfaceMain(surfaceXres, surfaceYres);
-                                    drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
                             }
                             stylusPressed = true;
@@ -1094,17 +1219,34 @@ int main(void) {
                         {
                             //hardcodeado porque lol
                             int selected = touch.px>>4;
+                            selected += ((touch.py-64)>>4)<<2;
                             switch(selected)
                             {
+                                case 0://rotate -90°
+                                    rotateNegative();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                break;
+                                case 1://rotate 90°
+                                    rotatePositive();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                break;
                                 case 2:
                                     flipV();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);
-                                    drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
                                 case 3:
                                     flipH();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);
-                                    drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                break;
+
+                                case 6:
+                                    scaleUp();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                break;
+
+                                case 7:
+                                    scaleDown();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
                             }
                             stylusPressed = true;
@@ -1150,7 +1292,7 @@ int main(void) {
                         drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
 
                         //dibujar arriba el nuevo color generado
-                        AVdrawRectangleDMA(pixels,192,64,32,8,_col);
+                        AVdrawRectangleDMA(pixels,192,64,32,8,_col,8);
 
                         //dibujar el contorno del color seleccionado
                         _col = AVinvertColor(_col);
@@ -1249,6 +1391,9 @@ int main(void) {
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
                                     exportNES(path,surface,1<<surfaceYres);
                                 break;
+                                case 4:
+                                    exportSNES(path,surface,1<<surfaceYres);
+                                break;
                             }
                             bitmapMode();
                         }
@@ -1278,8 +1423,12 @@ int main(void) {
                                     importSNES(path,surface);
                                     paletteBpp = 4;
                                 break;
-
-                                case 8://PAL
+                                case 6://ACS
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.acs", selector);
+                                    decodeAcs(path,surface);
+                                break;
+                                case 7://PAL
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
                                     importPal(path);
                                 break;
 
@@ -1302,7 +1451,7 @@ int main(void) {
                         "NES",
                         "SNES",
                         "GBA [NW]",
-                        ".acs [NW]",
+                        ".acs",
                         ".pal"
                     };
                     iprintf("You have selected the option: %d",selector);

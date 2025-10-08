@@ -9,8 +9,12 @@ int exportNES(const char* path, u16* surface, int height);
 
 int importSNES(const char* path, u16* surface);
 
-void importPal(const char* path);
+int exportSNES(const char* path, u16* surface, int height);
 
-void exportPal(const char* path);
+int importPal(const char* path);
+
+int exportPal(const char* path);
+
+bool decodeAcs(const char* file_path, u16* surface);
 
 #endif // FORMATS_H
