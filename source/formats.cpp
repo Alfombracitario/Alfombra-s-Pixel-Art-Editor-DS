@@ -1,15 +1,18 @@
+//gran parte de todo el código que está aquí (no todo) no fué hecho por mi, esto porque simplemente estoy dando soporte a formatos relativamente genéricos (todos menos .acs) y no quería gastar meses programando cada formato
+//por eso mismo, si alguien me ayudó con algún código lo dirá un comentario, si no entonces fué hecho por mi o directamente ChatGPT lol
+//momento vibe coding lmfao
 #include <nds.h>
 #include <stdio.h>
+#include <math.h>
 
-// =========================
-// NES (.chr) IMPORT / EXPORT desde SD
-// =========================
+#define min(a,b) ((a)<(b)?(a):(b))
+#define max(a,b) ((a)>(b)?(a):(b))
 
-// Importa archivo NES (.chr) desde SD a surface[]
-// path: ruta del archivo en la SD (ej: "/nes/graphics.chr")
-// surface: tu buffer 128x64 o 128x128 (u16)
-extern u16 backup[131072]; // declarado en main.cpp
+extern u16 backup[131072];
 extern u16 palette[256];
+extern int surfaceXres;
+extern int surfaceYres;
+extern int paletteSize;
 
 int importNES(const char* path, u16* surface) {
     FILE* f = fopen(path, "rb");
@@ -61,11 +64,6 @@ int importNES(const char* path, u16* surface) {
     return 0;
 }
 
-
-// Exporta surface[] como archivo NES (.chr) en la SD
-// path: ruta del archivo a guardar
-// surface: buffer 128x64 o 128x128
-// height: altura de la surface (64 o 128)
 int exportNES(const char* path, u16* surface, int height) {
     FILE* f = fopen(path, "wb");
     if (!f) {
@@ -172,9 +170,7 @@ int importSNES(const char* path, u16* surface) {
     return (int)numTiles;
 }
 
-// Exporta desde surface (128x128 u16 con índices 0..15) a archivo SNES 4bpp.
-// height = altura en píxeles a exportar (debe ser múltiplo de 8 y <= 128).
-// Retorna número de bytes escritos (>0) o -1 en error.
+
 int exportSNES(const char* path, u16* surface, int height) {
     if (!path || !surface) return -1;
     if (height <= 0 || height > 128) return -1;
@@ -226,6 +222,8 @@ int exportSNES(const char* path, u16* surface, int height) {
     if (written != bytesToWrite) return -1;
     return (int)written;
 }
+
+//por más sorprendente e increíble que parezca, yo hice la ingienería inversa y programación de las paletas! (lol)
 int importPal(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) {
@@ -237,7 +235,7 @@ int importPal(const char* path) {
     int palSize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (palSize > 768) {
+    if (palSize > paletteSize*3) {
         iprintf("Error: the file is too big\n");
         fclose(f);
         return -1;
@@ -258,13 +256,33 @@ int importPal(const char* path) {
 
         palette[i] = 0x8000 | (b << 10) | (g << 5) | r;
     }
-
     return 0;
 }
 
 
 int exportPal(const char* path){
-    return 0;
+    FILE* f = fopen(path, "wb");
+    if (!f) return -1;
+
+    int bytesToWrite = paletteSize*3;
+    for(int i = 0; i < paletteSize; i++)
+    {
+        //obtener los colores
+        u16 color = palette[i];
+        u8 r = color & 31;
+        u8 g = (color >> 5) & 31;
+        u8 b = (color >> 10) & 31;
+        
+        backup[i] = r<<3;i++;
+        backup[i] = g<<3;i++;
+        backup[i] = b<<3;i++;
+    }
+
+    size_t written = fwrite((uint8_t*)backup, 1, bytesToWrite, f);
+    fclose(f);
+
+    if (written != bytesToWrite) return -1;
+    return (int)written;
 }
 
 //======================================================ACS==================================================================================================|
@@ -313,7 +331,7 @@ int use_command(u8 command, int _i, u8* image, int image_size) {
     return a;
 }
 
-bool decodeAcs(const char* file_path, u16* surface) {
+bool decodeAcs(const char* file_path, u16* surface) {//traducido con ia, funciona horrible, tendré que hacerlo a mano :(
     FILE* file = fopen(file_path, "rb");
     if (!file) return false;
     
@@ -369,27 +387,21 @@ bool decodeAcs(const char* file_path, u16* surface) {
     
     // Determinar bits por pixel
     u8 BPP = 0;
-    u8 PPB = 0;
     
     if (PalCount < 256) {
         BPP = 8;
-        PPB = 1;
         if (PalCount < 16) {
             BPP = 4;
-            PPB = 2;
             if (PalCount <= 4) {
                 BPP = 2;
-                PPB = 4;
                 if (PalCount <= 2) {
                     BPP = 1;
-                    PPB = 8;
                 }
             }
         }
     }
     if (PalCount == 0) {
         BPP = 0;
-        PPB = 0;
     }
     
     // Inicializar paleta con alpha=1 (0x8000)
@@ -608,4 +620,322 @@ bool decodeAcs(const char* file_path, u16* surface) {
     }
     
     return true;
+}
+
+//gracias Zhennyak! (el hizo el código base para convertir a bmp, lo transformé para que sea compatible con el programa)
+void writeBmpHeader(FILE *f) {
+    // Cabecera BMP simple 16bpp sin compresión
+    unsigned char header[54] = {
+        'B','M',            // Firma
+        0,0,0,0,            // Tamaño del archivo (se rellena abajo)
+        0,0,0,0,            // Reservado
+        54,0,0,0,           // Offset datos (54 bytes de header)
+        40,0,0,0,           // Tamaño infoheader (40 bytes)
+        128,0,0,0,          // Ancho
+        128,0,0,0,          // Alto
+        1,0,                // Planos
+        16,0,               // Bits por pixel
+        3,0,0,0,            // Compresión BI_BITFIELDS (3 = usar masks)
+        0,0,0,0,            // Tamaño de imagen (se puede dejar 0)
+        0,0,0,0,            // Resolución X
+        0,0,0,0,            // Resolución Y
+        0,0,0,0,            // Colores usados
+        0,0,0,0             // Colores importantes
+    };
+
+    // Máscaras de color (para 16bpp RGB565)
+    unsigned int masks[3] = {
+        0xF800, // Rojo
+        0x07E0, // Verde
+        0x001F  // Azul
+    };
+
+    // Calcula tamaño total (header + pixeles)
+    int fileSize = 54 + 128 * 128 * 2 + 12; // +12 por masks
+    header[2] = (unsigned char)(fileSize);
+    header[3] = (unsigned char)(fileSize >> 8);
+    header[4] = (unsigned char)(fileSize >> 16);
+    header[5] = (unsigned char)(fileSize >> 24);
+
+    fwrite(header, 1, 54, f);
+    fwrite(masks, 4, 3, f); // Escribir las masks
+}
+
+// Guarda BMP usando paleta + surface en 16bpp directo
+void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* out = fopen(filename, "wb");
+    if(!out) {
+        return;
+    }
+
+    // Escribir cabecera BMP
+    writeBmpHeader(out);
+
+    // Escribir píxeles (desde abajo hacia arriba porque BMP lo requiere)
+    for(int y = 127; y >= 0; y--) {
+        for(int x = 0; x < 128; x++) {
+            uint16_t color = palette[surface[(y<<7)+ x]];
+            
+            //reordenamos el color para poder escribirlo correctamente
+            //1555 ABGR
+            u8 b = color & 31;
+            u8 g = (color >> 5) & 31;
+            u8 r = (color >> 10) & 31;
+            color = (r<<10) | g | (b >>10) | 0x8000;
+            fwrite(&color, 2, 1, out);
+        }
+    }
+
+    fclose(out);
+}
+#pragma pack(push, 1) // asegurar alineación exacta
+typedef struct {
+    uint16_t bfType;
+    uint32_t bfSize;
+    uint16_t bfReserved1;
+    uint16_t bfReserved2;
+    uint32_t bfOffBits;
+} BITMAPFILEHEADER;
+
+typedef struct {
+    uint32_t biSize;
+    int32_t  biWidth;
+    int32_t  biHeight;
+    uint16_t biPlanes;
+    uint16_t biBitCount;
+    uint32_t biCompression;
+    uint32_t biSizeImage;
+    int32_t  biXPelsPerMeter;
+    int32_t  biYPelsPerMeter;
+    uint32_t biClrUsed;
+    uint32_t biClrImportant;
+} BITMAPINFOHEADER;
+#pragma pack(pop)
+void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* out = fopen(filename, "wb");
+    if(!out) return;
+
+    int width = 128, height = 128;
+    int numColors = 256; // máximo
+
+    // --- File header ---
+    BITMAPFILEHEADER fileHeader;
+    BITMAPINFOHEADER infoHeader;
+
+    int paletteSize = numColors * 4; // cada entrada es BGRA (4 bytes)
+    int pixelArraySize = width * height; // 1 byte por pixel
+    int fileSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize + pixelArraySize;
+
+    fileHeader.bfType = 0x4D42; // "BM"
+    fileHeader.bfSize = fileSize;
+    fileHeader.bfReserved1 = 0;
+    fileHeader.bfReserved2 = 0;
+    fileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize;
+
+    // --- Info header ---
+    infoHeader.biSize = sizeof(BITMAPINFOHEADER);
+    infoHeader.biWidth = width;
+    infoHeader.biHeight = height; // positivo = bottom-up
+    infoHeader.biPlanes = 1;
+    infoHeader.biBitCount = 8; // indexado
+    infoHeader.biCompression = 0;
+    infoHeader.biSizeImage = pixelArraySize;
+    infoHeader.biXPelsPerMeter = 2835;
+    infoHeader.biYPelsPerMeter = 2835;
+    infoHeader.biClrUsed = numColors;
+    infoHeader.biClrImportant = numColors;
+
+    fwrite(&fileHeader, sizeof(fileHeader), 1, out);
+    fwrite(&infoHeader, sizeof(infoHeader), 1, out);
+
+    // --- Paleta: convertir de ARGB1555 a BGRA8888 ---
+    for(int i=0; i<numColors; i++) {
+        uint16_t c = palette[i];
+        uint8_t a = (c & 0x8000) ? 255 : 0;
+        uint8_t r = (c & 0x1F)<<3;
+        uint8_t g = ((c >> 5)  & 0x1F)<<3;
+        uint8_t b = ((c >> 10)  & 0x1F)<<3;
+        uint8_t entry[4] = { b, g, r, a }; // BMP espera BGRA
+        fwrite(entry, 4, 1, out);
+    }
+
+    // --- Píxeles (índices), bottom-up ---
+    for(int y = height-1; y >= 0; y--) {
+        for(int x = 0; x < width; x++) {
+            uint8_t idx = (uint8_t)(surface[y*width + x] & 0xFF);
+            fwrite(&idx, 1, 1, out);
+        }
+    }
+
+    fclose(out);
+}
+int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* in = fopen(filename, "rb");
+    if(!in) return 0;
+
+    BITMAPFILEHEADER fileHeader;
+    BITMAPINFOHEADER infoHeader;
+
+    fread(&fileHeader, sizeof(fileHeader), 1, in);
+    fread(&infoHeader, sizeof(infoHeader), 1, in);
+
+    if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
+    if(infoHeader.biBitCount != 8) { fclose(in); return 0; } // solo 8bpp soportado
+
+    int width = infoHeader.biWidth;
+    int height = infoHeader.biHeight;
+    int numColors = infoHeader.biClrUsed ? infoHeader.biClrUsed : 256;
+
+    // Leer paleta (BGRA → ARGB1555)
+    for(int i=0; i<numColors; i++) {
+        uint8_t entry[4];
+        fread(entry, 4, 1, in);
+        uint8_t b = entry[0];
+        uint8_t g = entry[1];
+        uint8_t r = entry[2];
+        //uint8_t a = entry[3];   a nadie le importa el alpha :>
+        uint16_t c =
+            (r>>3) |
+            ((g>>3) << 5)  |
+            ((b>>3) << 10)  |
+            (0x8000);
+        palette[i] = c;
+    }
+
+    // Leer surface
+    fseek(in, fileHeader.bfOffBits, SEEK_SET);
+    for(int y = height-1; y >= 0; y--) {
+        for(int x = 0; x < width; x++) {
+            uint8_t idx;
+            fread(&idx, 1, 1, in);
+            surface[y*width + x] = idx;
+        }
+    }
+
+    fclose(in);
+    return 1;
+}
+
+void saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* out = fopen(filename, "wb");
+    if (!out) return;
+
+    int width  = 1 << surfaceXres;
+    int height = 1 << surfaceYres;
+    int numColors = 16;
+
+    int bytesPerRow = ((width + 1) / 2 + 3) & ~3; // alineado a 4 bytes
+    int pixelArraySize = bytesPerRow * height;
+    int paletteSize = numColors * 4;
+    int fileSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize + pixelArraySize;
+
+    BITMAPFILEHEADER fileHeader;
+    BITMAPINFOHEADER infoHeader;
+
+    fileHeader.bfType = 0x4D42; // "BM"
+    fileHeader.bfSize = fileSize;
+    fileHeader.bfReserved1 = 0;
+    fileHeader.bfReserved2 = 0;
+    fileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize;
+
+    infoHeader.biSize = sizeof(BITMAPINFOHEADER);
+    infoHeader.biWidth = width;
+    infoHeader.biHeight = height;
+    infoHeader.biPlanes = 1;
+    infoHeader.biBitCount = 4;
+    infoHeader.biCompression = 0;
+    infoHeader.biSizeImage = pixelArraySize;
+    infoHeader.biXPelsPerMeter = 2835;
+    infoHeader.biYPelsPerMeter = 2835;
+    infoHeader.biClrUsed = numColors;
+    infoHeader.biClrImportant = numColors;
+
+    fwrite(&fileHeader, sizeof(fileHeader), 1, out);
+    fwrite(&infoHeader, sizeof(infoHeader), 1, out);
+
+    // Paleta (ARGB1555 → BGRA8888)
+    for (int i = 0; i < numColors; i++) {
+        uint16_t c = palette[i];
+        uint8_t a = (c & 0x8000) ? 255 : 0;
+        uint8_t r = (c & 0x1F) << 3;
+        uint8_t g = ((c >> 5) & 0x1F) << 3;
+        uint8_t b = ((c >> 10) & 0x1F) << 3;
+        uint8_t entry[4] = { b, g, r, a };
+        fwrite(entry, 4, 1, out);
+    }
+
+    // Píxeles (4bpp) → dos píxeles por byte, bottom-up
+    uint8_t pad[3] = {0,0,0};
+    for (int y = height - 1; y >= 0; y--) {
+        int offset = y * width;
+        int x = 0;
+        for (; x < width; x += 2) {
+            uint8_t p1 = surface[offset + x] & 0x0F;
+            uint8_t p2 = 0;
+            if (x + 1 < width) p2 = surface[offset + x + 1] & 0x0F;
+            uint8_t byte = (p1 << 4) | p2;
+            fwrite(&byte, 1, 1, out);
+        }
+        int rowBytes = (width + 1) / 2;
+        int padLen = (4 - (rowBytes % 4)) & 3;
+        fwrite(pad, 1, padLen, out);
+    }
+
+    fclose(out);
+}
+
+int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
+    FILE* in = fopen(filename, "rb");
+    if (!in) return 0;
+
+    BITMAPFILEHEADER fileHeader;
+    BITMAPINFOHEADER infoHeader;
+    fread(&fileHeader, sizeof(fileHeader), 1, in);
+    fread(&infoHeader, sizeof(infoHeader), 1, in);
+
+    if (fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
+    if (infoHeader.biBitCount != 4) { fclose(in); return 0; }
+
+    int width  = infoHeader.biWidth;
+    int height = infoHeader.biHeight;
+    int numColors = infoHeader.biClrUsed ? infoHeader.biClrUsed : 16;
+
+    // Redondear a potencias de 2
+    int newW = 1, newH = 1;
+    while (newW < width) newW <<= 1;
+    while (newH < height) newH <<= 1;
+    if (newW > 128) newW = 128;
+    if (newH > 128) newH = 128;
+    surfaceXres = (int)(log2(newW));
+    surfaceYres = (int)(log2(newH));
+
+    // Leer paleta
+    for (int i = 0; i < numColors; i++) {
+        uint8_t entry[4];
+        fread(entry, 4, 1, in);
+        uint8_t b = entry[0];
+        uint8_t g = entry[1];
+        uint8_t r = entry[2];
+        uint16_t c = (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) | 0x8000;
+        palette[i] = c;
+    }
+
+    // Leer píxeles
+    fseek(in, fileHeader.bfOffBits, SEEK_SET);
+    int bytesPerRow = ((width + 1) / 2 + 3) & ~3;
+
+    for (int y = height - 1; y >= 0; y--) {
+        int surfaceY = height - 1 - y;
+        fread(&backup[0], 1, bytesPerRow, in);
+        for (int x = 0; x < width; x += 2) {
+            uint8_t byte = ((uint8_t*)backup)[x / 2];
+            uint8_t p1 = (byte >> 4) & 0x0F;
+            uint8_t p2 = byte & 0x0F;
+            surface[surfaceY * newW + x] = p1;
+            if (x + 1 < newW) surface[surfaceY * newW + x + 1] = p2;
+        }
+    }
+
+    fclose(in);
+    return 1;
 }

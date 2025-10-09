@@ -164,15 +164,27 @@ if ( key < 0 ) return;
     }
 }
 //función para pasar de RAM a VRAM
+extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes);
+
 inline void submitVRAM()
 {
-    // Transferir pixelsTop a VRAM principal
-    int offset = (mainSurfaceYoffset<<8)+mainSurfaceXoffset;
-    int size = 512 << surfaceYres;//por más que la surface tenga una medida, copiamos toda la línea de la pantalla para ahorrar calls
-    dmaCopyHalfWords(3,pixelsTop+offset, pixelsTopVRAM+offset, size);//solo copia la pantalla
+    // Mantenemos exactamente la misma semántica/firmas
+    int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset;
+    int size = 512 << surfaceYres;
 
-    // Transferir pixels a VRAM secundaria
-    dmaCopyHalfWords(3,pixels, pixelsVRAM, 98304);
+    // Punteros como bytes
+    u16* srcTop = pixelsTop + offset;
+    u16* dstTop = pixelsTopVRAM + offset;
+
+    // Flush caché antes de copiar (importante en ARM9)
+    DC_FlushRange(srcTop, size);
+    // Llamada al memcpy asm rápido (bytes)
+    memcpy_fast_arm9((const void*)srcTop, (void*)dstTop, (unsigned int)size);
+
+    // Segunda copia (pantalla inferior), igual que antes
+    const int size2 = 98304; // tal como tenías
+    DC_FlushRange(pixels, size2);
+    memcpy_fast_arm9((const void*)pixels, (void*)pixelsVRAM, (unsigned int)size2);
 }
 inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
     int dx = abs(x1 - x0);
@@ -192,10 +204,9 @@ inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfa
     }
 }
 
-inline void drawGrid(u16 color)
-{
-    int separation = 1<<(subSurfaceZoom+gridSkips);//funciona
-    int rep = (128>>subSurfaceZoom)>>gridSkips;// no funciona
+inline void drawGrid(u16 color){
+    int separation = 1<<(subSurfaceZoom+gridSkips);
+    int rep = (128>>subSurfaceZoom)>>gridSkips;
     for(int i = 0; i < rep; i++)
     {
         AVdrawHlineDMA(pixels,64,192,i*separation,color);
@@ -206,6 +217,8 @@ inline void drawGrid(u16 color)
 //=========================================================DRAW SURFACE========================================================================
 
 //por algún motivo inline bajaba el rendimiento
+//este era el código antiguo de renderizado, el nuevo es más rápido, pero altamente distinto y específico, conservo esto solo por si acaso
+
 void drawSurfaceMain(int xsize = 7,int ysize = 7)
 {
     int xres = 1<<xsize;   // ancho
@@ -263,7 +276,7 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
     int dstY = 0;// fila destino
 
     for (int i = 0; i < blockSize; i++) {
-        int srcY = i + mainSurfaceYoffset + yoffset;// 
+        int srcY = i + mainSurfaceYoffset + yoffset;
         u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
 
         for (int k = 0; k < yrepeat; k++) {
@@ -284,7 +297,6 @@ void drawColorPalette()// optimizable (DMA)
     {
         for(int j = 0; j < 16; j++)//horizontal
         {
-            //esto es muuy lento pero bueeno que se le va a hacer... optimizarlo!
             AVdrawRectangle(pixels,192+(j<<2),4,64+(i<<2),4,palette[(i<<4)+j]);
             
         }
@@ -421,200 +433,6 @@ bool loadArray(const char *path, void *array, size_t size) {
     fread(array, 1, size, file);
     fclose(file);
     return true;
-}
-//gracias Zhennyak! (el hizo el código base para convertir a bmp, lo transformé para que sea compatible con el programa)
-
-void writeBmpHeader(FILE *f) {
-    // Cabecera BMP simple 16bpp sin compresión
-    unsigned char header[54] = {
-        'B','M',            // Firma
-        0,0,0,0,            // Tamaño del archivo (se rellena abajo)
-        0,0,0,0,            // Reservado
-        54,0,0,0,           // Offset datos (54 bytes de header)
-        40,0,0,0,           // Tamaño infoheader (40 bytes)
-        128,0,0,0,          // Ancho
-        128,0,0,0,          // Alto
-        1,0,                // Planos
-        16,0,               // Bits por pixel
-        3,0,0,0,            // Compresión BI_BITFIELDS (3 = usar masks)
-        0,0,0,0,            // Tamaño de imagen (se puede dejar 0)
-        0,0,0,0,            // Resolución X
-        0,0,0,0,            // Resolución Y
-        0,0,0,0,            // Colores usados
-        0,0,0,0             // Colores importantes
-    };
-
-    // Máscaras de color (para 16bpp RGB565)
-    unsigned int masks[3] = {
-        0xF800, // Rojo
-        0x07E0, // Verde
-        0x001F  // Azul
-    };
-
-    // Calcula tamaño total (header + pixeles)
-    int fileSize = 54 + 128 * 128 * 2 + 12; // +12 por masks
-    header[2] = (unsigned char)(fileSize);
-    header[3] = (unsigned char)(fileSize >> 8);
-    header[4] = (unsigned char)(fileSize >> 16);
-    header[5] = (unsigned char)(fileSize >> 24);
-
-    fwrite(header, 1, 54, f);
-    fwrite(masks, 4, 3, f); // Escribir las masks
-}
-
-// Guarda BMP usando paleta + surface en 16bpp directo
-void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
-    FILE* out = fopen(filename, "wb");
-    if(!out) {
-        return;
-    }
-
-    // Escribir cabecera BMP
-    writeBmpHeader(out);
-
-    // Escribir píxeles (desde abajo hacia arriba porque BMP lo requiere)
-    for(int y = 127; y >= 0; y--) {
-        for(int x = 0; x < 128; x++) {
-            uint16_t color = palette[surface[(y<<7)+ x]];
-            
-            //reordenamos el color para poder escribirlo correctamente
-            //1555 ABGR
-            u8 b = color & 31;
-            u8 g = (color >> 5) & 31;
-            u8 r = (color >> 10) & 31;
-            color = (r<<10) | g | (b >>10) | 0x8000;
-            fwrite(&color, 2, 1, out);
-        }
-    }
-
-    fclose(out);
-}
-#pragma pack(push, 1) // asegurar alineación exacta
-typedef struct {
-    uint16_t bfType;
-    uint32_t bfSize;
-    uint16_t bfReserved1;
-    uint16_t bfReserved2;
-    uint32_t bfOffBits;
-} BITMAPFILEHEADER;
-
-typedef struct {
-    uint32_t biSize;
-    int32_t  biWidth;
-    int32_t  biHeight;
-    uint16_t biPlanes;
-    uint16_t biBitCount;
-    uint32_t biCompression;
-    uint32_t biSizeImage;
-    int32_t  biXPelsPerMeter;
-    int32_t  biYPelsPerMeter;
-    uint32_t biClrUsed;
-    uint32_t biClrImportant;
-} BITMAPINFOHEADER;
-#pragma pack(pop)
-void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
-    FILE* out = fopen(filename, "wb");
-    if(!out) return;
-
-    int width = 128, height = 128;
-    int numColors = 256; // máximo
-
-    // --- File header ---
-    BITMAPFILEHEADER fileHeader;
-    BITMAPINFOHEADER infoHeader;
-
-    int paletteSize = numColors * 4; // cada entrada es BGRA (4 bytes)
-    int pixelArraySize = width * height; // 1 byte por pixel
-    int fileSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize + pixelArraySize;
-
-    fileHeader.bfType = 0x4D42; // "BM"
-    fileHeader.bfSize = fileSize;
-    fileHeader.bfReserved1 = 0;
-    fileHeader.bfReserved2 = 0;
-    fileHeader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + paletteSize;
-
-    // --- Info header ---
-    infoHeader.biSize = sizeof(BITMAPINFOHEADER);
-    infoHeader.biWidth = width;
-    infoHeader.biHeight = height; // positivo = bottom-up
-    infoHeader.biPlanes = 1;
-    infoHeader.biBitCount = 8; // indexado
-    infoHeader.biCompression = 0;
-    infoHeader.biSizeImage = pixelArraySize;
-    infoHeader.biXPelsPerMeter = 2835;
-    infoHeader.biYPelsPerMeter = 2835;
-    infoHeader.biClrUsed = numColors;
-    infoHeader.biClrImportant = numColors;
-
-    fwrite(&fileHeader, sizeof(fileHeader), 1, out);
-    fwrite(&infoHeader, sizeof(infoHeader), 1, out);
-
-    // --- Paleta: convertir de ARGB1555 a BGRA8888 ---
-    for(int i=0; i<numColors; i++) {
-        uint16_t c = palette[i];
-        uint8_t a = (c & 0x8000) ? 255 : 0;
-        uint8_t r = (c & 0x1F)<<3;
-        uint8_t g = ((c >> 5)  & 0x1F)<<3;
-        uint8_t b = ((c >> 10)  & 0x1F)<<3;
-        uint8_t entry[4] = { b, g, r, a }; // BMP espera BGRA
-        fwrite(entry, 4, 1, out);
-    }
-
-    // --- Píxeles (índices), bottom-up ---
-    for(int y = height-1; y >= 0; y--) {
-        for(int x = 0; x < width; x++) {
-            uint8_t idx = (uint8_t)(surface[y*width + x] & 0xFF);
-            fwrite(&idx, 1, 1, out);
-        }
-    }
-
-    fclose(out);
-}
-int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
-    FILE* in = fopen(filename, "rb");
-    if(!in) return 0;
-
-    BITMAPFILEHEADER fileHeader;
-    BITMAPINFOHEADER infoHeader;
-
-    fread(&fileHeader, sizeof(fileHeader), 1, in);
-    fread(&infoHeader, sizeof(infoHeader), 1, in);
-
-    if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
-    if(infoHeader.biBitCount != 8) { fclose(in); return 0; } // solo 8bpp soportado
-
-    int width = infoHeader.biWidth;
-    int height = infoHeader.biHeight;
-    int numColors = infoHeader.biClrUsed ? infoHeader.biClrUsed : 256;
-
-    // Leer paleta (BGRA → ARGB1555)
-    for(int i=0; i<numColors; i++) {
-        uint8_t entry[4];
-        fread(entry, 4, 1, in);
-        uint8_t b = entry[0];
-        uint8_t g = entry[1];
-        uint8_t r = entry[2];
-        //uint8_t a = entry[3];   a nadie le importa el alpha :>
-        uint16_t c =
-            (r>>3) |
-            ((g>>3) << 5)  |
-            ((b>>3) << 10)  |
-            (0x8000);
-        palette[i] = c;
-    }
-
-    // Leer surface
-    fseek(in, fileHeader.bfOffBits, SEEK_SET);
-    for(int y = height-1; y >= 0; y--) {
-        for(int x = 0; x < width; x++) {
-            uint8_t idx;
-            fread(&idx, 1, 1, in);
-            surface[y*width + x] = idx;
-        }
-    }
-
-    fclose(in);
-    return 1;
 }
 
 //============================================================= INPUT =================================================|
@@ -1248,6 +1066,15 @@ int main(void) {
                                     scaleDown();
                                     drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
+
+                                case 38: //undo
+
+                                break;
+                                
+                                case 39: //redo
+
+                                break;
+
                             }
                             stylusPressed = true;
                         }
@@ -1387,12 +1214,22 @@ int main(void) {
                                     saveBMP_indexed(path,palette,surface);
                                 break;
 
+                                case 2://bmp 4bpp
+                                    saveBMP_4bpp(path,palette,surface);
+                                break;
+
                                 case 3://NES
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
                                     exportNES(path,surface,1<<surfaceYres);
                                 break;
                                 case 4:
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.bin", selector);                                                                                   
                                     exportSNES(path,surface,1<<surfaceYres);
+                                break;
+
+                                case 7: //Pal
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.pal", selector);
+                                    exportPal(path);
                                 break;
                             }
                             bitmapMode();
@@ -1408,10 +1245,12 @@ int main(void) {
                                 default:
                                     iprintf("\nNot supported!");
                                 break;
-                                case 1://bmp indexed
+                                case 1://bmp 8bpp
                                     loadBMP_indexed(path,palette,surface);
                                 break;
-
+                                case 2://bmp 4bpp
+                                    loadBMP_4bpp(path,palette,surface);
+                                break;
                                 case 3://NES
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
                                     importNES(path,surface);
@@ -1447,7 +1286,7 @@ int main(void) {
                     char texts[8][32] = {
                         ".bmp direct",
                         ".bmp 8bpp",
-                        ".bmp 4bpp [NW]",
+                        ".bmp 4bpp",
                         "NES",
                         "SNES",
                         "GBA [NW]",
