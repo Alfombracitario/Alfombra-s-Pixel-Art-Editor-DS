@@ -23,8 +23,7 @@ DATA		:=
 INCLUDES	:=	include
 GRAPHICS	:=	data
 
-# Forzar modo DSi
-DSI         := 1
+
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
@@ -34,6 +33,8 @@ CFLAGS	:=	-g -Wall -O2 -ffunction-sections -fdata-sections\
 		$(ARCH)
 
 CFLAGS	+=	$(INCLUDE) -DARM9
+
+
 CXXFLAGS	:= $(CFLAGS) -fno-rtti -fno-exceptions
 
 ASFLAGS	:=	-g $(ARCH)
