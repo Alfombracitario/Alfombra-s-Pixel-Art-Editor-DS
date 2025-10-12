@@ -104,6 +104,69 @@ int exportNES(const char* path, u16* surface, int height) {
     fclose(f);
     return numTiles * 16; // bytes escritos
 }
+int importGBC(const char* path, u16* surface) {
+    FILE* file = fopen(path, "rb");
+    if(!file) return -1;
+
+    // Leer todo a backup (temporal)
+    int size = fread(backup, 1, sizeof(backup), file);
+    fclose(file);
+    if(size <= 0) return -2;
+
+    int numTiles = size / 16;
+    int tilesPerRow = 128 / 8;
+
+    for(int t = 0; t < numTiles; t++) {
+        int tileX = (t % tilesPerRow) * 8;
+        int tileY = (t / tilesPerRow) * 8;
+        if(tileY >= 128) break; // fuera del canvas
+
+        u8* tile = (u8*)&backup[t * 8]; // cada tile = 16 bytes = 8 líneas * 2 bytes
+        for(int y = 0; y < 8; y++) {
+            u8 low  = tile[y * 2];
+            u8 high = tile[y * 2 + 1];
+            for(int x = 0; x < 8; x++) {
+                int bit = 7 - x;
+                u8 color = ((high >> bit) & 1) << 1 | ((low >> bit) & 1);
+                surface[(tileY + y) * 128 + (tileX + x)] = color; // solo el índice (0–3)
+            }
+        }
+    }
+
+    return 0;
+}
+
+int exportGBC(const char* path, u16* surface, int height) {
+    FILE* file = fopen(path, "wb");
+    if(!file) return -1;
+
+    int tilesPerRow = 128 / 8;
+    int numTilesY = height / 8;
+    int totalTiles = tilesPerRow * numTilesY;
+
+    u8 tile[16];
+
+    for(int t = 0; t < totalTiles; t++) {
+        int tileX = (t % tilesPerRow) * 8;
+        int tileY = (t / tilesPerRow) * 8;
+        for(int y = 0; y < 8; y++) {
+            u8 low = 0, high = 0;
+            for(int x = 0; x < 8; x++) {
+                u16 color = surface[(tileY + y) * 128 + (tileX + x)] & 3; // 2 bits
+                int bit = 7 - x;
+                low  |= (color & 1) << bit;
+                high |= ((color >> 1) & 1) << bit;
+            }
+            tile[y * 2] = low;
+            tile[y * 2 + 1] = high;
+        }
+        fwrite(tile, 1, 16, file);
+    }
+
+    fclose(file);
+    return 0;
+}
+
 
 //SNES
 int importSNES(const char* path, u16* surface) {
@@ -132,7 +195,7 @@ int importSNES(const char* path, u16* surface) {
 
     uint8_t* data = (uint8_t*)backup; // trabajar por bytes
 
-    const int tilesPerRow = 128 / 8; // 16
+    const int tilesPerRow = 16; // 16
     // Limpiar surface por si sobra espacio
     // (opcional; puedes comentar si no quieres limpiar)
     for (int i = 0; i < 128*128; ++i) surface[i] = 0;
@@ -179,8 +242,8 @@ int exportSNES(const char* path, u16* surface, int height) {
     FILE* f = fopen(path, "wb");
     if (!f) return -1;
 
-    const int tilesPerRow = 128 / 8; // 16
-    const int tilesHigh = height / 8;
+    const int tilesPerRow = 16; // 16
+    const int tilesHigh = height>>3;
     const int numTiles = tilesPerRow * tilesHigh;
     const size_t bytesToWrite = (size_t)numTiles * 32;
 
@@ -222,7 +285,65 @@ int exportSNES(const char* path, u16* surface, int height) {
     if (written != bytesToWrite) return -1;
     return (int)written;
 }
+//GBA
+int importGBA(const char* path, u16* surface) {
+    FILE* file = fopen(path, "rb");
+    if(!file) return -1;
 
+    // Leer todo el archivo a backup (temporal)
+    int size = fread(backup, 1, sizeof(backup), file);
+    fclose(file);
+    if(size <= 0) return -2;
+
+    int numTiles = size / 32;
+    int tilesPerRow = 128 / 8;
+
+    for(int t = 0; t < numTiles; t++) {
+        int tileX = (t % tilesPerRow) * 8;
+        int tileY = (t / tilesPerRow) * 8;
+        if(tileY >= 128) break; // fuera del canvas
+
+        u8* tile = (u8*)&backup[t * 16]; // 32 bytes = 16 u16
+        for(int y = 0; y < 8; y++) {
+            for(int x = 0; x < 8; x++) {
+                u8 byte = tile[y * 4 + (x >> 1)];
+                u8 color;
+                if(x & 1) color = byte >> 4;
+                else      color = byte & 0x0F;
+                surface[(tileY + y) * 128 + (tileX + x)] = color;
+            }
+        }
+    }
+
+    return 0;
+}
+
+int exportGBA(const char* path, u16* surface, int height) {
+    FILE* file = fopen(path, "wb");
+    if(!file) return -1;
+
+    int tilesPerRow = 128 / 8;
+    int numTilesY = height / 8;
+    int totalTiles = tilesPerRow * numTilesY;
+
+    u8 tile[32]; // 4 bytes por fila * 8 filas
+
+    for(int t = 0; t < totalTiles; t++) {
+        int tileX = (t % tilesPerRow) * 8;
+        int tileY = (t / tilesPerRow) * 8;
+        for(int y = 0; y < 8; y++) {
+            for(int bx = 0; bx < 4; bx++) {
+                u8 c0 = surface[(tileY + y) * 128 + (tileX + bx*2)] & 0x0F;
+                u8 c1 = surface[(tileY + y) * 128 + (tileX + bx*2 + 1)] & 0x0F;
+                tile[y * 4 + bx] = (c1 << 4) | c0;
+            }
+        }
+        fwrite(tile, 1, 32, file);
+    }
+
+    fclose(file);
+    return 0;
+}
 //por más sorprendente e increíble que parezca, yo hice la ingienería inversa y programación de las paletas! (lol)
 int importPal(const char* path) {
     FILE* f = fopen(path, "rb");
@@ -284,346 +405,132 @@ int exportPal(const char* path){
     if (written != bytesToWrite) return -1;
     return (int)written;
 }
+//PCX
+int importPCX(const char* path, u16* surface) {
+    FILE* f = fopen(path, "rb");
+    if(!f) return -1;
 
-//======================================================ACS==================================================================================================|
-// Tabla de resoluciones predefinidas
-const u16 res[] = {4,8,12,16,24,32,48,64,96,128,196,256,382,512,1024};
+    // Leer cabecera (128 bytes)
+    u8 header[128];
+    fread(header, 1, 128, f);
 
-int use_command(u8 command, int _i, u8* image, int image_size) {
-    int a = 0; // pixels advanced
-    int action = command & 7;
-    int parameter = (command & 248) >> 3;
-    
-    switch (action) {
-        case 0: { // repeat X
-            u8 c = image[_i];
-            int rep = parameter;
-            for (int k = 0; k < rep; k++) {
-                if (_i + a + 1 >= image_size) break;
-                image[_i + a + 1] = c;
-                a++;
-            }
-        } break;
-        
-        case 1: { // mirror X
-            int rep = parameter;
-            for (int k = 0; k < rep; k++) {
-                if (_i + a + 1 >= image_size || _i - a - 1 < 0) break;
-                u8 c = image[_i - a - 1];
-                image[_i + a + 1] = c;
-                a++;
-            }
-        } break;
-        
-        case 2: { // pattern X
-            int rep = parameter & 3;
-            int back = (parameter >> 2) & 7;
-            for (int k = 0; k < rep; k++) {
-                for (int l = 0; l < back; l++) {
-                    if (_i + a >= image_size || _i - back + a < 0) break;
-                    u8 c = image[_i - back + a];
-                    image[_i + a] = c;
-                    a++;
-                }
-            }
-        } break;
+    int xmin = header[4] | (header[5] << 8);
+    int ymin = header[6] | (header[7] << 8);
+    int xmax = header[8] | (header[9] << 8);
+    int ymax = header[10] | (header[11] << 8);
+    int width  = xmax - xmin + 1;
+    int height = ymax - ymin + 1;
+
+    // Saltar posible tabla de colores EGA (si existe)
+    int bytesPerLine = header[66] | (header[67] << 8);
+
+    // Leer datos comprimidos (RLE)
+    int dataSize = fread(backup, 1, sizeof(backup), f);
+
+    // Buscar paleta VGA al final: 0x0C seguido de 768 bytes
+    fseek(f, -769, SEEK_END);
+    if(fgetc(f) != 0x0C) { fclose(f); return -2; }
+
+    for(int i = 0; i < 256; i++) {
+        u8 r = fgetc(f);
+        u8 g = fgetc(f);
+        u8 b = fgetc(f);
+        // Convertir a RGB1555 y activar bit alpha (0x8000)
+        palette[i] = 0x8000 | ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
     }
-    return a;
+
+    fclose(f);
+
+    // Decodificar RLE
+    f = fopen(path, "rb");
+    fseek(f, 128, SEEK_SET);
+    int pos = 0;
+    for(int y = 0; y < height; y++) {
+        int x = 0;
+        while(x < width) {
+            int byte = fgetc(f);
+            if(byte == EOF) break;
+            if((byte & 0xC0) == 0xC0) {
+                int count = byte & 0x3F;
+                int value = fgetc(f);
+                for(int i = 0; i < count && x < width; i++) {
+                    surface[y * 128 + x++] = value;
+                }
+            } else {
+                surface[y * 128 + x++] = byte;
+            }
+        }
+    }
+    fclose(f);
+    return 0;
 }
 
-bool decodeAcs(const char* file_path, u16* surface) {//traducido con ia, funciona horrible, tendré que hacerlo a mano :(
-    FILE* file = fopen(file_path, "rb");
-    if (!file) return false;
-    
-    // Cargar archivo completo en backup
-    fseek(file, 0, SEEK_END);
-    u32 size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    fread(backup, 1, size, file);
-    fclose(file);
-    
-    u32 pos = 0;
-    u8* buffer = (u8*)backup;
-    
-    // Macro READ
-    #define READ (buffer[pos++])
-    
-    u8 b = READ;
-    u8 b2 = 0, b3 = 0;
-    
-    // HEADER: Leer información de resolución
-    u8 format = b;
-    b = READ;
-    
-    u16 xres, yres;
-    
-    // Leer resolución X
-    u8 xres_index = (b & 0xF0) >> 4;
-    if (xres_index == 15) {
-        b2 = READ;
-        b3 = READ;
-        xres = (b2 << 8) | b3;
-    } else {
-        xres = res[xres_index];
-    }
-    
-    // Leer resolución Y
-    u8 yres_index = b & 0x0F;
-    if (yres_index == 15) {
-        b2 = READ;
-        b3 = READ;
-        yres = (b2 << 8) | b3;
-    } else {
-        yres = res[yres_index];
-    }
-    
-    // Verificar que la resolución no exceda 128x128
-    if (xres > 128 || yres > 128) {
-        return false;
-    }
-    
-    // Leer cantidad de colores en paleta
-    u8 PalCount = READ;
-    
-    // Determinar bits por pixel
-    u8 BPP = 0;
-    
-    if (PalCount < 256) {
-        BPP = 8;
-        if (PalCount < 16) {
-            BPP = 4;
-            if (PalCount <= 4) {
-                BPP = 2;
-                if (PalCount <= 2) {
-                    BPP = 1;
-                }
-            }
-        }
-    }
-    if (PalCount == 0) {
-        BPP = 0;
-    }
-    
-    // Inicializar paleta con alpha=1 (0x8000)
-    for (int i = 0; i < 256; i++) {
-        palette[i] = 0x8000; // Alpha siempre 1
-    }
-    
-    // Generar paleta
-    if (PalCount != 0) {
-        switch (format) {
-            default: { // ARGB 1555
-                for (u16 i = 0; i < PalCount; i++) {
-                    b = READ;
-                    b2 = READ;
-                    u16 color_val = (b << 8) | b2;
-                    // Convertir ARGB1555 a RGB (mantener alpha=1)
-                    palette[i] = 0x8000 | (color_val & 0x7FFF);
-                }
-            } break;
-            
-            case 1: { // grayscale 8-bit
-                for (u16 i = 0; i < PalCount; i++) {
-                    b = READ;
-                    u8 gray = b >> 3; // Convertir a 5 bits
-                    palette[i] = 0x8000 | (gray << 10) | (gray << 5) | gray;
-                }
-            } break;
-            
-            case 2: { // grayscale 4-bit packed
-                for (u16 i = 0; i < PalCount; i += 2) {
-                    b = READ;
-                    u8 gray1 = (b & 0xF0) >> 4;
-                    u8 gray2 = b & 0x0F;
-                    
-                    gray1 = gray1 >> 3; // Convertir a 5 bits
-                    gray2 = gray2 >> 3;
-                    
-                    palette[i] = 0x8000 | (gray1 << 10) | (gray1 << 5) | gray1;
-                    if (i + 1 < PalCount) {
-                        palette[i + 1] = 0x8000 | (gray2 << 10) | (gray2 << 5) | gray2;
-                    }
-                }
-            } break;
-            
-            case 3: { // ARGB 8888
-                for (u16 i = 0; i < PalCount; i++) {
-                    u8 a = READ; // Alpha (no se usa, siempre 1)
-                    u8 r = READ;
-                    u8 g = READ;
-                    u8 b_val = READ;
-                    
-                    // Convertir RGB888 a RGB555
-                    u8 r5 = r >> 3;
-                    u8 g5 = g >> 3;
-                    u8 b5 = b_val >> 3;
-                    
-                    palette[i] = 0x8000 | (r5 << 10) | (g5 << 5) | b5;
-                }
-            } break;
-        }
-    }
-    
-    // Crear buffer de imagen temporal
-    int image_size = xres * yres;
-    u8* image = (u8*)backup; // Usar segunda mitad del backup para la imagen
-    
-    // Leer datos de píxeles
-    u32 data_remaining = size - pos;
-    
-    for (u32 i = 0; i < data_remaining; i++) {
-        b = READ;
-        u8 c = 0;
-        
-        switch (BPP) {
-            case 0: { // color directo
-                switch (format) {
-                    default: { // ARGB 1555
-                        if (b & 128) {
-                            b2 = READ;
-                            i++;
-                            u16 color_val = (b << 8) | b2;
-                            // Convertir a índice de paleta (buscar color existente)
-                            u16 rgb_color = color_val & 0x7FFF;
-                            u8 palette_index = 0;
-                            
-                            // Buscar el color en la paleta
-                            for (u8 p = 0; p < PalCount; p++) {
-                                if ((palette[p] & 0x7FFF) == rgb_color) {
-                                    palette_index = p;
-                                    break;
-                                }
-                            }
-                            
-                            int pixel_index = i >> 1;
-                            if (pixel_index < image_size) {
-                                image[pixel_index] = palette_index;
-                            }
-                        } else {
-                            b = READ; // leer comando
-                            int pixels_advanced = use_command(b, i >> 1, image, image_size);
-                            i += pixels_advanced << 1;
-                            i++; // del READ anterior
-                        }
-                    } break;
-                    
-                    case 1: { // grayscale 8-bit
-                        // Buscar o asignar en paleta
-                        u8 gray = b >> 3;
-                        u16 gray_color = 0x8000 | (gray << 10) | (gray << 5) | gray;
-                        u8 palette_index = 0;
-                        
-                        for (u8 p = 0; p < PalCount; p++) {
-                            if (palette[p] == gray_color) {
-                                palette_index = p;
-                                break;
-                            }
-                        }
-                        
-                        if (i < image_size) {
-                            image[i] = palette_index;
-                        }
-                    } break;
-                    
-                    case 3: { // ARGB 8888
-                        u8 r = READ;
-                        i++;
-                        if (b > 0 && r != 0) {
-                            u8 g = READ;
-                            i++;
-                            u8 b_val = READ;
-                            i++;
-                            
-                            // Convertir a RGB555
-                            u8 r5 = r >> 3;
-                            u8 g5 = g >> 3;
-                            u8 b5 = b_val >> 3;
-                            u16 rgb_color = 0x8000 | (r5 << 10) | (g5 << 5) | b5;
-                            
-                            // Buscar en paleta
-                            u8 palette_index = 0;
-                            for (u8 p = 0; p < PalCount; p++) {
-                                if (palette[p] == rgb_color) {
-                                    palette_index = p;
-                                    break;
-                                }
-                            }
-                            
-                            int pixel_index = i >> 2;
-                            if (pixel_index < image_size) {
-                                image[pixel_index] = palette_index;
-                            }
-                        } else {
-                            b = READ; // leer comando
-                            int pixels_advanced = use_command(b, i >> 2, image, image_size);
-                            i += pixels_advanced << 2;
-                            i++; // del READ anterior
-                        }
-                    } break;
-                }
-            } break;
-            
-            case 1: { // 1bpp
-                for (u8 _i = 0; _i < 8; _i++) {
-                    c = (b >> _i) & 1;
-                    int pixel_index = (i << 3) + _i;
-                    if (pixel_index < image_size) {
-                        image[pixel_index] = c;
-                    }
-                }
-            } break;
-            
-            case 2: { // 2bpp
-                for (u8 _i = 0; _i < 4; _i++) {
-                    u8 m = _i << 1;
-                    c = (b >> m) & 3;
-                    int pixel_index = (i << 2) + _i;
-                    if (pixel_index < image_size) {
-                        image[pixel_index] = c;
-                    }
-                }
-            } break;
-            
-            case 4: { // 4bpp
-                for (u8 _i = 0; _i < 2; _i++) {
-                    u8 m = _i << 2;
-                    c = (b >> m) & 15;
-                    int pixel_index = (i << 1) + _i;
-                    if (pixel_index < image_size) {
-                        image[pixel_index] = c;
-                    }
-                }
-            } break;
-            
-            case 8: { // 8bpp con comandos
-                if (b != 0) {
-                    c = b;
-                    if (i < image_size) {
-                        image[i] = c;
-                    }
-                } else {
-                    b = READ; // leer byte de comando
-                    i += use_command(b, i, image, image_size);
-                    i++; // del READ anterior
-                }
-            } break;
-        }
-    }
-    
-    // Copiar imagen decodificada a surface
-    for (int y = 0; y < yres && y < 128; y++) {
-        for (int x = 0; x < xres && x < 128; x++) {
-            int src_index = y * xres + x;
-            int dst_index = y * 128 + x;
-            surface[dst_index] = image[src_index];
-        }
-    }
-    
-    return true;
-}
+// ----------------------------------------------------
+// Exportar surface + palette -> PCX 8bpp indexada
+// ----------------------------------------------------
+int exportPCX(const char* path, u16* surface, int width, int height) {
+    FILE* f = fopen(path, "wb");
+    if(!f) return -1;
 
+    u8 header[128] = {0};
+    header[0] = 10;   // Manufacturer = ZSoft
+    header[1] = 5;    // Version
+    header[2] = 1;    // Encoding = RLE
+    header[3] = 8;    // Bits per pixel
+    header[4] = 0; header[5] = 0; // xmin
+    header[6] = 0; header[7] = 0; // ymin
+    header[8] = (width - 1) & 0xFF;
+    header[9] = (width - 1) >> 8;
+    header[10] = (height - 1) & 0xFF;
+    header[11] = (height - 1) >> 8;
+    header[12] = width & 0xFF;
+    header[13] = width >> 8;
+    header[65] = 1;   // planes
+    header[66] = width & 0xFF; // bytes per line
+    header[67] = width >> 8;
+    header[68] = 8;   // palette info
+
+    fwrite(header, 1, 128, f);
+
+    // RLE encoding
+    for(int y = 0; y < height; y++) {
+        int x = 0;
+        while(x < width) {
+            int value = surface[y * 128 + x];
+            int count = 1;
+            while(x + count < width && surface[y * 128 + x + count] == value && count < 63)
+                count++;
+
+            if(count > 1 || (value & 0xC0) == 0xC0) {
+                fputc(0xC0 | count, f);
+                fputc(value, f);
+            } else {
+                fputc(value, f);
+            }
+            x += count;
+        }
+    }
+
+    // Paleta VGA: marcador 0x0C + 256 colores RGB
+    fputc(0x0C, f);
+    for(int i = 0; i < 256; i++) {
+        u16 c = palette[i];
+        u8 r = ((c >> 10) & 31) << 3;
+        u8 g = ((c >> 5) & 31) << 3;
+        u8 b = (c & 31) << 3;
+        fputc(r, f);
+        fputc(g, f);
+        fputc(b, f);
+    }
+
+    fclose(f);
+    return 0;
+}
 //gracias Zhennyak! (el hizo el código base para convertir a bmp, lo transformé para que sea compatible con el programa)
 void writeBmpHeader(FILE *f) {
+    int xres = 1<<surfaceXres;
+    int yres = 1<<surfaceYres;
+
     // Cabecera BMP simple 16bpp sin compresión
     unsigned char header[54] = {
         'B','M',            // Firma
@@ -631,8 +538,8 @@ void writeBmpHeader(FILE *f) {
         0,0,0,0,            // Reservado
         54,0,0,0,           // Offset datos (54 bytes de header)
         40,0,0,0,           // Tamaño infoheader (40 bytes)
-        128,0,0,0,          // Ancho
-        128,0,0,0,          // Alto
+        xres,0,0,0,          // Ancho
+        yres,0,0,0,          // Alto
         1,0,                // Planos
         16,0,               // Bits por pixel
         3,0,0,0,            // Compresión BI_BITFIELDS (3 = usar masks)
@@ -651,7 +558,7 @@ void writeBmpHeader(FILE *f) {
     };
 
     // Calcula tamaño total (header + pixeles)
-    int fileSize = 54 + 128 * 128 * 2 + 12; // +12 por masks
+    int fileSize = 54 + xres * yres * 2 + 12; // +12 por masks
     header[2] = (unsigned char)(fileSize);
     header[3] = (unsigned char)(fileSize >> 8);
     header[4] = (unsigned char)(fileSize >> 16);
@@ -715,8 +622,8 @@ void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface)
     FILE* out = fopen(filename, "wb");
     if(!out) return;
 
-    int width = 128, height = 128;
-    int numColors = 256; // máximo
+    int width = 1<<surfaceXres, height = 1<<surfaceYres;
+    int numColors = paletteSize; // máximo
 
     // --- File header ---
     BITMAPFILEHEADER fileHeader;
@@ -937,5 +844,266 @@ int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     }
 
     fclose(in);
+    return 1;
+}
+
+//gif
+// --- Estructuras básicas del GIF ---
+typedef struct {
+    char signature[3]; // "GIF"
+    char version[3];   // "89a" o "87a"
+    u16 width;
+    u16 height;
+    u8 flags;
+    u8 bgColorIndex;
+    u8 aspect;
+} GIFHeader;
+
+typedef struct {
+    u8 separator; // 0x2C
+    u16 left;
+    u16 top;
+    u16 width;
+    u16 height;
+    u8 flags;
+} GIFImageDescriptor;
+
+// --- Función para leer GIF ---
+int importGIF(const char* path, u16* surface) {
+    FILE* f = fopen(path, "rb");
+    if(!f) return 0;
+
+    GIFHeader header;
+    fread(&header, sizeof(GIFHeader), 1, f);
+    if(strncmp(header.signature, "GIF", 3) != 0) { fclose(f); return 0; }
+
+    bool hasGlobalPalette = header.flags & 0x80;
+    int globalPaletteSize = 2 << (header.flags & 0x07);
+    if(hasGlobalPalette) {
+        for(int i = 0; i < globalPaletteSize && i < 256; i++) {
+            u8 rgb[3];
+            fread(rgb, 1, 3, f);
+            int r = rgb[0] >> 3;
+            int g = rgb[1] >> 3;
+            int b = rgb[2] >> 3;
+            palette[i] = 0x8000 | (r) | (g << 5) | (b << 10);
+        }
+    }
+
+    // buscar descriptor de imagen
+    GIFImageDescriptor imgDesc;
+    while(1) {
+        u8 block = fgetc(f);
+        if(block == 0x2C) { // descriptor de imagen
+            fread(&imgDesc, sizeof(GIFImageDescriptor), 1, f);
+            break;
+        }
+        else if(block == 0x21) { // extensión
+            fgetc(f); // tipo
+            u8 size;
+            while((size = fgetc(f)) != 0) fseek(f, size, SEEK_CUR);
+        }
+        else if(block == 0x3B) { // fin del archivo
+            fclose(f);
+            return 0;
+        }
+    }
+
+    // leer LZW min code size (lo ignoramos en versión sin compresión)
+    u8 lzwMinCodeSize = fgetc(f);
+
+    // leer datos hasta el bloque de fin
+    u8 size;
+    int offset = 0;
+    while((size = fgetc(f)) != 0) {
+        fread(&backup[offset], 1, size, f);
+        offset += size;
+    }
+
+    // decodificación simplificada (sin LZW, solo índices directos)
+    // para archivos pequeños o sin compresión
+    // los píxeles se copian directamente como índices
+    int w = imgDesc.width;
+    int h = imgDesc.height;
+    for(int y = 0; y < h && y < 128; y++) {
+        for(int x = 0; x < w && x < 128; x++) {
+            int idx = backup[y * w + x] & 0xFF;
+            surface[y * 128 + x] = palette[idx];
+        }
+    }
+
+    fclose(f);
+    return 1;
+}
+
+// --- Exportar GIF simple sin compresión ---
+int exportGIF(const char* path, u16* surface, int width, int height) {
+    FILE* f = fopen(path, "wb");
+    if(!f) return 0;
+
+    // Escribir encabezado
+    fwrite("GIF89a", 1, 6, f);
+
+    // Logical Screen Descriptor
+    fwrite(&width, 2, 1, f);
+    fwrite(&height, 2, 1, f);
+    u8 flags = 0xF7; // global palette 256 colores
+    u8 bgColor = 0;
+    u8 aspect = 0;
+    fwrite(&flags, 1, 1, f);
+    fwrite(&bgColor, 1, 1, f);
+    fwrite(&aspect, 1, 1, f);
+
+    // Paleta global (convertir a RGB888)
+    for(int i = 0; i < 256; i++) {
+        u16 c = palette[i];
+        u8 r = ((c >> 0) & 0x1F) << 3;
+        u8 g = ((c >> 5) & 0x1F) << 3;
+        u8 b = ((c >> 10) & 0x1F) << 3;
+        fputc(r, f); fputc(g, f); fputc(b, f);
+    }
+
+    // Descriptor de imagen
+    fputc(0x2C, f);
+    u16 zero = 0;
+    fwrite(&zero, 2, 1, f); // left
+    fwrite(&zero, 2, 1, f); // top
+    fwrite(&width, 2, 1, f);
+    fwrite(&height, 2, 1, f);
+    u8 noFlags = 0;
+    fwrite(&noFlags, 1, 1, f);
+
+    // Compresión mínima (LZW code size = 8)
+    fputc(8, f);
+
+    // Bloques directos sin compresión (pseudo LZW)
+    int total = width * height;
+    int written = 0;
+    while(written < total) {
+        int chunk = (total - written > 255) ? 255 : (total - written);
+        fputc(chunk, f);
+        for(int i = 0; i < chunk; i++) {
+            // buscar índice de color
+            u16 color = surface[written + i];
+            int idx = 0;
+            for(int p = 0; p < 256; p++) {
+                if(palette[p] == color) { idx = p; break; }
+            }
+            fputc(idx, f);
+        }
+        written += chunk;
+    }
+    fputc(0, f); // fin de datos
+    fputc(0x3B, f); // terminador GIF
+
+    fclose(f);
+    return 1;
+}
+
+//TGA
+// --- Estructura del encabezado TGA ---
+typedef struct {
+    u8  idLength;
+    u8  colorMapType;
+    u8  imageType;
+    u16 colorMapStart;
+    u16 colorMapLength;
+    u8  colorMapDepth;
+    u16 xOrigin;
+    u16 yOrigin;
+    u16 width;
+    u16 height;
+    u8  bpp;
+    u8  descriptor;
+} TGAHeader;
+
+// --- Importar TGA indexado 8bpp ---
+int importTGA(const char* path, u16* surface) {
+    FILE* f = fopen(path, "rb");
+    if(!f) return 0;
+
+    TGAHeader header;
+    fread(&header, sizeof(TGAHeader), 1, f);
+
+    // Verificar tipo (1 = color map, sin compresión)
+    if(header.imageType != 1 || header.bpp != 8 || header.colorMapType != 1) {
+        fclose(f);
+        return 0; // no es un TGA indexado válido
+    }
+
+    // Saltar campo ID si existe
+    if(header.idLength > 0)
+        fseek(f, header.idLength, SEEK_CUR);
+
+    // Leer paleta (hasta 256 colores)
+    int colors = header.colorMapLength;
+    for(int i = 0; i < colors && i < 256; i++) {
+        u8 rgb[3];
+        fread(rgb, 1, 3, f);
+        int r = rgb[2] >> 3; // nota: BGR en TGA
+        int g = rgb[1] >> 3;
+        int b = rgb[0] >> 3;
+        palette[i] = 0x8000 | (r) | (g << 5) | (b << 10);
+    }
+
+    // Leer pixeles indexados
+    int w = header.width;
+    int h = header.height;
+    int size = w * h;
+    fread(backup, 1, size, f);
+
+    // Copiar al surface (limitado a 128x128)
+    for(int y = 0; y < h && y < 128; y++) {
+        for(int x = 0; x < w && x < 128; x++) {
+            u8 index = ((u8*)backup)[(h - 1 - y) * w + x]; // TGA va de abajo hacia arriba
+            surface[y * 128 + x] = palette[index];
+        }
+    }
+
+    fclose(f);
+    return 1;
+}
+
+// --- Exportar TGA indexado 8bpp sin compresión ---
+int exportTGA(const char* path, u16* surface, int width, int height) {
+    FILE* f = fopen(path, "wb");
+    if(!f) return 0;
+
+    TGAHeader header;
+    memset(&header, 0, sizeof(header));
+    header.colorMapType = 1;
+    header.imageType = 1; // uncompressed, color-mapped
+    header.colorMapStart = 0;
+    header.colorMapLength = 256;
+    header.colorMapDepth = 24;
+    header.width = width;
+    header.height = height;
+    header.bpp = 8;
+    header.descriptor = 0x00; // origen inferior izquierdo
+
+    fwrite(&header, sizeof(TGAHeader), 1, f);
+
+    // Paleta (convertir a BGR888)
+    for(int i = 0; i < 256; i++) {
+        u16 c = palette[i];
+        u8 r = ((c >> 0) & 0x1F) << 3;
+        u8 g = ((c >> 5) & 0x1F) << 3;
+        u8 b = ((c >> 10) & 0x1F) << 3;
+        fputc(b, f); fputc(g, f); fputc(r, f);
+    }
+
+    // Imagen indexada (invertida verticalmente)
+    for(int y = height - 1; y >= 0; y--) {
+        for(int x = 0; x < width; x++) {
+            u16 color = surface[y * 128 + x];
+            int idx = 0;
+            for(int p = 0; p < 256; p++) {
+                if(palette[p] == color) { idx = p; break; }
+            }
+            fputc(idx, f);
+        }
+    }
+
+    fclose(f);
     return 1;
 }

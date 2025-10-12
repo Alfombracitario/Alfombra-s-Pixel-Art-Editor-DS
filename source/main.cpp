@@ -26,6 +26,7 @@
 #include "avdslib.h"
 #include "formats.h"
 #include "GFXinput.h"
+#include "GFXconsoleInput.h"
 #include "GFXselector24.h"
 #include "GFXselector16.h"
 
@@ -37,7 +38,6 @@
 #define SURFACE_Y 0
 #define SURFACE_W 128
 #define SURFACE_H 256
-#define BACKUP_MAX 8
 
 #define C_WHITE 65535
 #define C_RED 32799
@@ -51,7 +51,7 @@
 
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
-static PrintConsole bottomConsole;
+//static PrintConsole bottomConsole;
 
 //IWRAM, 32KB usados
 u16 surface[16384]__attribute__((section(".iwram"))); // 32 KB en IWRAM
@@ -65,6 +65,9 @@ u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb
+u16 pages[1048576];//2mb
+int backupMax = 8;
+int backupSize = 16384;
 
 int backupIndex = -1;       // índice del último frame guardado
 int oldestBackup = 0;       // límite inferior (el frame más antiguo que aún es válido)
@@ -77,7 +80,18 @@ int paletteSize = 256;
 int palettePos = 0;
 int paletteBpp = 8;
 int paletteOffset = 0;
+bool nesMode = false;
 u8 palEdit[3];
+const u16 nesPalette[64] = {
+    0xbdef, 0xd804, 0xdc05, 0xd04c, 0xbc93, 0x9856, 0x80d4, 0x810f,
+    0x8169, 0x81a7, 0x81a7, 0xa186, 0xc146, 0x8000, 0x8000, 0x8000,
+    0xdef7, 0xfd88, 0xfd08, 0xf912, 0xe11b, 0xb11b, 0x815c, 0x81d8,
+    0x8231, 0x828a, 0x8aa9, 0xb689, 0xe248, 0x8000, 0x8000, 0x8000,
+    0xffff, 0xfe8c, 0xfe0a, 0xfdd4, 0xfd9e, 0xd99f, 0x99ff, 0x829f,
+    0x935d, 0x83b3, 0xa3ce, 0xcb8e, 0xf34c, 0xb18c, 0x8000, 0x8000,
+    0xffff, 0xff52, 0xfef4, 0xfed8, 0xfedc, 0xf6ff, 0xdf3f, 0xd37f,
+    0xcbdf, 0xc3d9, 0xd3d4, 0xe7f4, 0xfbf4, 0xd294, 0x8000, 0x8000
+};
 //otras variables
 int imgFormat = 0;
 int prevtpx = 0;
@@ -98,8 +112,6 @@ int surfaceYres = 7;
 int stackYres = 7;
 int stackXres = 7;
 
-bool showGrid = false;
-int gridSkips = 0;
 
 // Variables globales para controlar el modo actual
 enum subMode { SUB_TEXT, SUB_BITMAP };
@@ -114,6 +126,9 @@ u32 kDown = 0;
 u32 kHeld = 0;
 u32 kUp = 0;
 bool stylusPressed = false;
+bool showGrid = false;
+bool drew = false;
+int gridSkips = 0;
 
 enum {
     ACTION_NONE      = 0,
@@ -168,24 +183,35 @@ extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes)
 
 inline void submitVRAM()
 {
-    // Mantenemos exactamente la misma semántica/firmas
-    int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset;
-    int size = 512 << surfaceYres;
+    // ====== Cálculo de offsets y tamaños ======
+    const int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset;
+    const int sizeTop = 512 << surfaceYres;   // Tamaño top (512, 1024, etc.)
+    const int sizeBottom = 98304;             // Tamaño fijo pantalla inferior
 
-    // Punteros como bytes
     u16* srcTop = pixelsTop + offset;
     u16* dstTop = pixelsTopVRAM + offset;
 
-    // Flush caché antes de copiar (importante en ARM9)
-    DC_FlushRange(srcTop, size);
-    // Llamada al memcpy asm rápido (bytes)
-    memcpy_fast_arm9((const void*)srcTop, (void*)dstTop, (unsigned int)size);
+    // ====== Flush caché antes de cualquier transferencia ======
+    DC_FlushRange(srcTop, sizeTop);
+    DC_FlushRange(pixels, sizeBottom);
 
-    // Segunda copia (pantalla inferior), igual que antes
-    const int size2 = 98304; // tal como tenías
-    DC_FlushRange(pixels, size2);
-    memcpy_fast_arm9((const void*)pixels, (void*)pixelsVRAM, (unsigned int)size2);
+    // ====== 1. Iniciar DMA3 para pantalla inferior ======
+    DMA3_CR = 0; // aseguramos que esté parado
+    DMA3_SRC = (u32)pixels;
+    DMA3_DEST = (u32)pixelsVRAM;
+    DMA3_CR = (sizeBottom >> 1) | DMA_ENABLE; // copia en halfwords
+
+    // ====== 2. Mientras DMA copia, ARM9 copia la pantalla superior ======
+    memcpy_fast_arm9(srcTop, dstTop, sizeTop);
+
+    // ====== 3. Esperar a que termine el DMA antes de continuar ======
+    while (DMA3_CR & DMA_ENABLE); // espera completado
+
+    // ====== (Opcional) Flush final si VRAM se usará en GPU inmediatamente ======
+    DC_FlushRange(pixelsVRAM, sizeBottom);
+    DC_FlushRange(pixelsTopVRAM, sizeTop);
 }
+
 inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
     int dx = abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
@@ -302,6 +328,19 @@ void drawColorPalette()// optimizable (DMA)
         }
     }
 }
+
+void drawNesPalette()
+{
+    //dibujar paleta
+    for(int i = 0; i < 4; i++)//vertical
+    {
+        for(int j = 0; j < 16; j++)//horizontal
+        {
+            AVdrawRectangle(pixels,192+(j<<2),4,48+(i<<2),4,nesPalette[(i<<4)+j]);
+        }
+    }
+}
+
 //==================== PALETAS ==========|
 void updatePal(int increment, int *palettePos)
 {
@@ -330,16 +369,19 @@ void updatePal(int increment, int *palettePos)
     u8 _barColAmount[3] = {r, g, b};
     for(int i = 0; i < 3; i++)palEdit[i] = _barColAmount[i];
 
-    //rectangulos de abajo
-    u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
-
-    for(int i = 0; i < 3; i++)
+    if(nesMode == false)
     {
-        AVdrawRectangle(pixels,192,_barColAmount[i]<<1,(i<<3)+40,8,_barCol[i]);//barra de color
-        AVdrawRectangle(pixels,192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
-    }
+        //rectangulos de abajo
+        u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
 
-    AVdrawRectangle(pixels,192,64,32,8,_col);//rectángulo de arriba (color mezclado)
+        for(int i = 0; i < 3; i++)
+        {
+            AVdrawRectangle(pixels,192,_barColAmount[i]<<1,(i<<3)+40,8,_barCol[i]);//barra de color
+            AVdrawRectangle(pixels,192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
+        }
+
+        AVdrawRectangle(pixels,192,64,32,8,_col);//rectángulo de arriba (color mezclado)
+    }
 
     //obtenemos la coordenada de la paleta (otra vez)
     posx = *palettePos & 15;
@@ -383,7 +425,6 @@ inline void clearTopBitmap()
         AVfillDMA(pixelsTopVRAM,j<<8,(((j+1)<<8)-1),_col);
     }
 }
-
 inline void textMode()
 {
     if(currentSubMode == SUB_TEXT) return; // ya estamos en texto
@@ -394,10 +435,8 @@ inline void textMode()
     vramSetBankA(VRAM_A_MAIN_BG);
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
 
-    // Pantalla inferior
-    videoSetModeSub(MODE_0_2D);
-    vramSetBankC(VRAM_C_SUB_BG);
-    consoleInit(&bottomConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
+    decompress(GFXconsoleInputBitmap, BG_GFX_SUB, LZ77Vram);
+    oamClear(&oamSub, 0, 128);
 }
 
 inline void bitmapMode()
@@ -653,6 +692,9 @@ void scaleUp(){
     int stackW = 1 << stackXres;
     int stackH = 1 << stackYres;
 
+    //felicidades, encontraste la peor línea que verás en tu vida!
+    if((((((stackH-1)<<1)+1)+subSurfaceYoffset)<<surfaceXres)+((stackW-1)<<1)+subSurfaceXoffset > (1<<surfaceXres<<surfaceYres)){return;} //fuera de rango
+
     for(int sy = 0; sy < stackH; ++sy){
         int srcBase = sy * stackW;
 
@@ -734,6 +776,30 @@ void rotateNegative() { // 90° Horario
         }
     }
 }
+//====================================================================Backups==============================================================|
+void setBackupVariables(){
+    backupIndex = 0;
+    backupSize = 1<<surfaceXres<<surfaceYres;
+    backupMax = 131072>>surfaceXres>>surfaceYres;
+    //reinicia el backup
+    for(int i = 0; i < 131072; i++){
+        backup[i] = 0;
+    }
+}
+void backupWrite(){
+    backupIndex++;
+    if(backupIndex >= backupMax){
+        backupIndex = 0;
+    }
+    int index = backupIndex*backupSize;
+    //copia surface a backup+ su index
+    dmaCopyHalfWords(2, surface, backup + index, backupSize * sizeof(u16));
+}
+void backupRead(){
+    // Calculamos el índice del bloque en el array backup
+    int index = backupIndex * backupSize;
+    dmaCopyHalfWords(2, backup + index, surface, backupSize * sizeof(u16));
+}
 
 
 //====================================================================FPS==================================================================|
@@ -797,46 +863,15 @@ void initBitmap()
     clearTopBitmap();
 
     updatePal(0, &palettePos);
+    drawSurfaceMain(surfaceXres, surfaceYres);
     drawSurfaceBottom(surfaceXres, surfaceYres);
 }
-//================Backups========================|
-void pushBackup(void) {
-    backupIndex = (backupIndex + 1) & (BACKUP_MAX - 1);
-    u16 *dst = backup + backupIndex * stackSize;// Dirección destino en backup
-    // Copiar surface actual
-    dmaCopyHalfWords(3, surface, dst, stackSize * sizeof(u16));
-
-    if (totalBackups < BACKUP_MAX) totalBackups++;
-    // Si llenamos todo, el más antiguo avanza
-    if (totalBackups == BACKUP_MAX)
-        oldestBackup = (oldestBackup + 1) & (BACKUP_MAX - 1);
-}
-// Obtener puntero al respaldo con un índice relativo
-// offset = 0 → más reciente, 1 → anterior, etc.
-void loadBackup(void) {
-    // No retroceder si no hay backups
-    if (totalBackups == 0) return;
-
-    // Calcular índice anterior
-    int previousIndex = (backupIndex - 1) & (BACKUP_MAX - 1);
-
-    // Si retroceder nos llevaría al más antiguo que ya es inválido, detener
-    if (previousIndex == oldestBackup) {
-        // Llegaste al límite más antiguo permitido
-        return;
-    }
-
-    // Cargar backup anterior en surface (DMA)
-    u16 *src = backup + previousIndex * stackSize;
-    dmaCopyHalfWords(3, src, surface, stackSize * sizeof(u16));
-
-    // Retroceder índice actual
-    backupIndex = previousIndex;
-}
-
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
-
+    for(int i = 0; i < 1048576; i++)
+    {
+        pages[i] = 0;
+    }
     initFPS();
     // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
     videoSetMode(MODE_0_2D);                // modo texto
@@ -900,9 +935,9 @@ int main(void) {
         -1,
         false, false, false, false, false);
 
+    setBackupVariables();
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
     while(pmMainLoop()) {
-        swiWaitForVBlank();
         scanKeys();
         kDown = keysDown();
         kHeld = keysHeld();
@@ -952,7 +987,6 @@ int main(void) {
             palettePos = palettePos & (paletteSize-1);//mantiene la paleta dentro de un límite
             if(palettePos < 0){palettePos = 0;}
             //recordar que debo hacer cambios dependiendo del bpp
-
             if (kHeld & KEY_TOUCH) {
                 if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//apunta a la surface
                     int localX = touch.px - SURFACE_X;
@@ -971,7 +1005,8 @@ int main(void) {
 
                         drawSurfaceMain(surfaceXres, surfaceYres);
                         drawSurfaceBottom(surfaceXres, surfaceYres);
-                        stylusPressed = true;   
+                        drew = true;
+                        stylusPressed = true;
                     }
                 }
                 if(touch.px < 64)//apunta a la parte izquierda
@@ -995,21 +1030,20 @@ int main(void) {
                             {
                                 case 0: //load file
                                     textMode();
-                                    kbd->OnKeyPressed = OnKeyPressed;
-                                    //keyboardShow();
                                     currentConsoleMode = LOAD_file;
+                                    goto textConsole;
                                 break;
 
                                 case 1: //New file
                                     textMode();
                                     currentConsoleMode = MODE_NEWIMAGE;
+                                    goto textConsole;
                                 break;
 
                                 case 2:// Save file
                                     textMode();
-                                    kbd->OnKeyPressed = OnKeyPressed;
-                                    //keyboardShow();
                                     currentConsoleMode = SAVE_file;
+                                    goto textConsole;
                                 break;
 
                                 //PLACEHOLDER el caso 3 está libre por ahora :> (pienso usarlo para configuración en un futuro)
@@ -1058,6 +1092,7 @@ int main(void) {
                                 break;
 
                                 case 6:
+                                    //verificar si es posible escalar
                                     scaleUp();
                                     drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
@@ -1067,12 +1102,22 @@ int main(void) {
                                     drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
 
-                                case 38: //undo
-
+                                case 26: //undo
+                                    backupIndex--;
+                                    if(backupIndex < 0){
+                                        backupIndex = backupMax;
+                                    }
+                                    backupRead();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
                                 
-                                case 39: //redo
-
+                                case 27: //redo
+                                    backupIndex++;
+                                    if(backupIndex > backupMax){
+                                        backupIndex = 0;
+                                    }
+                                    backupRead();
+                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
                                 break;
 
                             }
@@ -1096,34 +1141,51 @@ int main(void) {
                     
                     else if(touch.py >= 40 && touch.py < 64)//creador de colores
                     {
-                        int index = (touch.py-40)>>3;
-                        int amount = (touch.px-192)>>1;
-                        palEdit[index] = amount;
-                        //actualizar barra
+                        if(nesMode){
+                            int ystart = 48;
+                            int row = (touch.px-192)>>2;
+                            int col = (touch.py-ystart)>>2;
+                            int index = (col<<4)+row;
 
-                        u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
-                        AVdrawRectangle(pixels,192,amount<<1,(index<<3)+40,8,_barCol[index]);
-                        //Limpiar el area
-                        AVdrawRectangle(pixels,192+(amount<<1),64-(amount<<1),(index<<3)+40,8,C_BLACK);
+                            u16 _col = nesPalette[index];
+                            AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                            drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
 
-                        //actualizar el color
-                        u16 _col = palEdit[0];
-                        _col += palEdit[1]<<5;
-                        _col += palEdit[2]<<10;
-                        _col += 32768;//encender pixel
-                        palette[palettePos] = _col;
-                        //dibujar en la pantalla
-                        AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
-                        
-                        drawSurfaceMain(surfaceXres, surfaceYres);
-                        drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+                            palette[palettePos] = _col;
+                            //dibujar el contorno del color seleccionado
+                            _col = AVinvertColor(_col);
+                            AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                        }
+                        else{
+                            int index = (touch.py-40)>>3;
+                            int amount = (touch.px-192)>>1;
+                            palEdit[index] = amount;
+                            //actualizar barra
 
-                        //dibujar arriba el nuevo color generado
-                        AVdrawRectangleDMA(pixels,192,64,32,8,_col,8);
+                            u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
+                            AVdrawRectangle(pixels,192,amount<<1,(index<<3)+40,8,_barCol[index]);
+                            //Limpiar el area
+                            AVdrawRectangle(pixels,192+(amount<<1),64-(amount<<1),(index<<3)+40,8,C_BLACK);
 
-                        //dibujar el contorno del color seleccionado
-                        _col = AVinvertColor(_col);
-                        AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                            //actualizar el color
+                            u16 _col = palEdit[0];
+                            _col += palEdit[1]<<5;
+                            _col += palEdit[2]<<10;
+                            _col += 32768;//encender pixel
+                            palette[palettePos] = _col;
+                            //dibujar en la pantalla
+                            AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                            
+                            drawSurfaceMain(surfaceXres, surfaceYres);
+                            drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+
+                            //dibujar arriba el nuevo color generado
+                            AVdrawRectangleDMA(pixels,192,64,32,8,_col,8);
+
+                            //dibujar el contorno del color seleccionado
+                            _col = AVinvertColor(_col);
+                            AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                        }
                     }
                     else//seleccionar un color en la paleta
                     {
@@ -1140,9 +1202,12 @@ int main(void) {
 
                 }
             }
-            else
-            {
+            else{
                 stylusPressed = false;
+            }
+            if(kUp & KEY_TOUCH && drew == true){
+                drew = false;
+                backupWrite();
             }
             //código de final de frame
             if (actions != ACTION_NONE) {
@@ -1153,14 +1218,9 @@ int main(void) {
         }
         else//=======================================CONSOLA DE TEXTO=======================================>
         {
-                //mostrar qué se está haciendo y revisar input
-                //consoleSelect(&topConsole);
+            textConsole:
                 swiWaitForVBlank();
                 consoleClear();
-
-                //keyboardUpdate(); // importante para mantener el teclado funcional
-
-                //u32 keys = kDown;
 
                 if(kDown & KEY_B)
                 {
@@ -1194,7 +1254,8 @@ int main(void) {
                     }
                 }
                 if(currentConsoleMode == SAVE_file || currentConsoleMode == LOAD_file)
-                {
+                {   
+                    
                     if(currentConsoleMode == SAVE_file)
                     {
                         iprintf("Save file:\n");
@@ -1222,14 +1283,33 @@ int main(void) {
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
                                     exportNES(path,surface,1<<surfaceYres);
                                 break;
-                                case 4:
+                                case 4://GameBoy
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGbc.bin", selector);
+                                    exportGBC(path,surface,1<<surfaceYres);
+                                break;
+                                case 5://SNES
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.bin", selector);                                                                                   
                                     exportSNES(path,surface,1<<surfaceYres);
                                 break;
-
-                                case 7: //Pal
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.pal", selector);
+                                case 6://GBA
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGba.bin", selector);                                                                                   
+                                    exportGBA(path,surface,1<<surfaceYres);
+                                break;
+                                case 7://PCX
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pcx", selector);                                                                                   
+                                    exportPCX(path,surface,1<<surfaceXres,1<<surfaceYres);
+                                break;
+                                case 8: //Pal
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
                                     exportPal(path);
+                                break;
+                                case 9://Gif
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.gif", selector);
+                                    exportGif(path,surface,1<<surfaceXres,1<<surfaceYres);
+                                break;
+                                case 10://Tga
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.tga", selector);
+                                    exportTGA(path,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                             }
                             bitmapMode();
@@ -1239,7 +1319,9 @@ int main(void) {
                         iprintf("Load file:\n");
                         if(kDown & KEY_A)//se carga el archivo
                         {
+                            //variables predeterminadas
                             sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                            nesMode = false;
                             switch(selectorA)
                             {
                                 default:
@@ -1247,35 +1329,55 @@ int main(void) {
                                 break;
                                 case 1://bmp 8bpp
                                     loadBMP_indexed(path,palette,surface);
+                                    paletteBpp = 8;
                                 break;
                                 case 2://bmp 4bpp
                                     loadBMP_4bpp(path,palette,surface);
+                                    paletteBpp = 4;
                                 break;
                                 case 3://NES
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
                                     importNES(path,surface);
+                                    paletteBpp = 2;nesMode = true;
+                                    drawNesPalette();
+                                break;
+                                case 4://GBC
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGbc.bin", selector);
+                                    importGBC(path,surface);
                                     paletteBpp = 2;
                                 break;
-
-                                case 4://SNES
+                                case 5://SNES
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.bin", selector);
                                     importSNES(path,surface);
                                     paletteBpp = 4;
                                 break;
-                                case 6://ACS
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.acs", selector);
-                                    decodeAcs(path,surface);
+                                case 6://GBA
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGba.bin", selector);
+                                    importGBA(path,surface);
+                                    paletteBpp = 4;
                                 break;
-                                case 7://PAL
+                                case 7://PCX
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pcx", selector);
+                                    importPCX(path,surface);
+                                break;
+                                case 8://PAL
                                     sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
                                     importPal(path);
                                 break;
-
+                                case 9://GIF
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.gif", selector);
+                                    importGif(path,surface);
+                                break;
+                                case 10://TGA
+                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.tga", selector);
+                                    importTGA(path,surface);
+                                break;
                             }
                             bitmapMode();
                             drawSurfaceBottom(surfaceXres,surfaceYres);
                             drawSurfaceMain(surfaceXres,surfaceYres);
                             drawColorPalette();
+                            setBackupVariables();
                         }
                     }
                     //general
@@ -1283,23 +1385,24 @@ int main(void) {
                     if(kDown & KEY_LEFT && selectorA > 0){selectorA--;}
                     if(kDown & KEY_UP && selector > 0){selector--;}
                     if(kDown & KEY_DOWN){selector++;}
-                    char texts[8][32] = {
+                    char texts[11][32] = {
                         ".bmp direct",
                         ".bmp 8bpp",
                         ".bmp 4bpp",
                         "NES",
+                        "GB",
                         "SNES",
-                        "GBA [NW]",
-                        ".acs",
-                        ".pal"
+                        "GBA",
+                        ".pcx",
+                        ".pal",
+                        ".gif",
+                        ".tga"
                     };
-                    iprintf("You have selected the option: %d",selector);
-                    iprintf("\nCurrent format: %s",texts[selectorA]);
-                    iprintf("\n\nPress A to do the action");
-                    iprintf("\nPress B to go back");
+                    iprintf("Image: %d",selector);
+                    iprintf("\nFormat: %s",texts[selectorA]);
                 }
         }
-        
+        swiWaitForVBlank();
         oamUpdate(&oamSub);
         //updateFPS();
         //AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);

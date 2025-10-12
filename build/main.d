@@ -116,6 +116,7 @@ main.o: \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/avdslib.h \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/formats.h \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXinput.h \
+ C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXconsoleInput.h \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector16.h
 C:/devkitPro/libnds/include/nds.h:
@@ -236,5 +237,6 @@ C:/devkitPro/libnds/include/dvm.h:
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/avdslib.h:
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/source/formats.h:
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXinput.h:
+C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXconsoleInput.h:
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h:
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector16.h:

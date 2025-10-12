@@ -1,21 +1,41 @@
 #ifndef FORMATS_H
 #define FORMATS_H
 
-#include <nds.h>   // para u16, dmaFillHalfWords y cosas de NDS
+#include <nds.h>
 
 int importNES(const char* path, u16* surface);
 
 int exportNES(const char* path, u16* surface, int height);
 
+int importGBC(const char* path, u16* surface);
+
+int exportGBC(const char* path, u16* surface, int height);
+
 int importSNES(const char* path, u16* surface);
 
 int exportSNES(const char* path, u16* surface, int height);
+
+int importGBA(const char* path, u16* surface);
+
+int exportGBA(const char* path, u16* surface, int height);
+
+int importPCX(const char* path, u16* surface);
+
+int exportPCX(const char* path, u16* surface, int width, int height);
 
 int importPal(const char* path);
 
 int exportPal(const char* path);
 
-bool decodeAcs(const char* file_path, u16* surface);
+int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface);
+
+int importGIF(const char* path, u16* surface);
+
+int exportGIF(const char* path, u16* surface, int width, int height);
+
+int importTGA(const char* path, u16* surface);
+
+int exportTGA(const char* path, u16* surface, int width, int height);
 
 void writeBmpHeader(FILE *f);
 
