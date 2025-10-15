@@ -63,7 +63,6 @@ u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb
-u16 pages[1048576];//2mb
 int backupMax = 8;
 int backupSize = 16384;
 
@@ -277,9 +276,18 @@ void drawSurfaceMain(int xsize = 7,int ysize = 7)
         }
     }
 }
+extern "C" void __attribute__((target("arm"))) drawSurfaceBottom2x(u16*, u16*, int, int);
+extern "C" void __attribute__((target("arm"))) drawSurfaceBottom4x(u16*, u16*, int, int);
+extern "C" void __attribute__((target("arm"))) drawSurfaceBottom8x(u16*, u16*, int, int);
+extern "C" void __attribute__((target("arm"))) drawSurfaceBottom16x(u16*, u16*, int, int);
+extern "C" void __attribute__((target("arm"))) drawSurfaceBottom32x(u16*, u16*, int, int);
+
 void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
     int xres = 1 << xsize;
     int yres = 1 << ysize;
+
+    u16 *srcBase = pixelsTop + ((mainSurfaceYoffset + subSurfaceYoffset) << 8) + (mainSurfaceXoffset + subSurfaceXoffset);
+    u16 *dstBase = pixels + 64; // centrado
 
     // rama sin zoom: copia directa por DMA
     if(subSurfaceZoom == 0 && xres == 128) {
@@ -288,30 +296,41 @@ void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
         for(int i = 0; i < yres; i++) {
             u16* src = pixelsTop + ((i + mainSurfaceYoffset) << 8) + mainSurfaceXoffset;
             u16* dst = pixels + ((i << 8) + 64);
-            dmaCopyHalfWords(0, src, dst, 256);
+            memcpy_fast_arm9(src, dst, 256);
         }
         return;
+    }else if(subSurfaceZoom == 1){
+        drawSurfaceBottom2x(srcBase, dstBase, 512, 512);
+    }else if(subSurfaceZoom == 2){
+        drawSurfaceBottom4x(srcBase, dstBase, 512, 512);
+    }else if(subSurfaceZoom == 3){
+        drawSurfaceBottom8x(srcBase, dstBase, 512, 512);
+    }else if(subSurfaceZoom == 4){
+        drawSurfaceBottom16x(srcBase, dstBase, 512, 512);
+    }else if(subSurfaceZoom == 5){
+        drawSurfaceBottom32x(srcBase, dstBase, 512, 512);
     }
+    else{//fórmula general
+        //calcular offsets y repeticiones
+        int blockSize = 128 >> subSurfaceZoom;
+        int yrepeat   = 1 << subSurfaceZoom;
+        int xoffset   = subSurfaceXoffset;
+        int yoffset   = subSurfaceYoffset;
 
-    //calcular offsets y repeticiones
-    int blockSize = 128 >> subSurfaceZoom;
-    int yrepeat   = 1 << subSurfaceZoom;
-    int xoffset   = subSurfaceXoffset;
-    int yoffset   = subSurfaceYoffset;
+        int dstY = 0;// fila destino
 
-    int dstY = 0;// fila destino
+        for (int i = 0; i < blockSize; i++) {
+            int srcY = i + mainSurfaceYoffset + yoffset;
+            u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
 
-    for (int i = 0; i < blockSize; i++) {
-        int srcY = i + mainSurfaceYoffset + yoffset;
-        u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
+            for (int k = 0; k < yrepeat; k++) {
+                u16* dstRow = pixels + (dstY << 8) + 64;
 
-        for (int k = 0; k < yrepeat; k++) {
-            u16* dstRow = pixels + (dstY << 8) + 64;
-
-            for (int j = 0; j < 128; j++) {
-                dstRow[j] = srcRow[j >> subSurfaceZoom];
+                for (int j = 0; j < 128; j++) {
+                    dstRow[j] = srcRow[j >> subSurfaceZoom];
+                }
+                dstY++;
             }
-            dstY++;
         }
     }
     if(showGrid == true){drawGrid(AVinvertColor(palette[paletteOffset]));}
@@ -886,10 +905,6 @@ void updateFPS() {
 }
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
-    for(int i = 0; i < 1048576; i++)
-    {
-        pages[i] = 0;
-    }
     initFPS();
     // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
     videoSetMode(MODE_0_2D);                // modo texto

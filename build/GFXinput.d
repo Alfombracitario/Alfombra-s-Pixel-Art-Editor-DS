@@ -1,0 +1,1 @@
+GFXinput.o: GFXinput.s
