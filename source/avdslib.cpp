@@ -33,18 +33,34 @@ u16 AVreadPixel(u16* arr, int x, int y)
     return arr[(y<<8) + x];
 }
 
-void AVdrawRectangle(u16* arr, int x,int width, int y,int height, u16 color){
-    int xlimit = x+width;
-    int ylimit = y+height;
-    for(int i = y; i < ylimit; i++)//eje vertical
-    {
-        int _y = i<<8;
-        for(int j = x; j < xlimit; j++)//eje horizontal
-        {
-            arr[_y + j] = color;
+void AVdrawRectangle(u16* arr, int x, int width, int y, int height, u16 color)
+{
+    int xlimit = x + width;
+    int ylimit = y + height;
+    int stride = 256; // ancho fijo del buffer
+
+    // 🔹 Caso trivial: ancho chico → bucle simple
+    if (width <= 8) {
+        for (int i = y; i < ylimit; i++) {
+            u16* row = arr + (i * stride) + x;
+            for (int j = 0; j < width; j++)
+                row[j] = color;
         }
+        return;
+    }
+
+    // 🔹 Preparar línea temporal si el ancho es mayor
+    static u16 tempLine[256];  // suficiente para 256 pixeles
+    for (int j = 0; j < width; j++)
+        tempLine[j] = color;
+
+    // 🔹 Copiar esa línea a cada fila
+    for (int i = y; i < ylimit; i++) {
+        u16* row = arr + (i * stride) + x;
+        memcpy(row, tempLine, width * 2);
     }
 }
+
 
 void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color,int arrayXres = 8) {
     int xto = x + width;

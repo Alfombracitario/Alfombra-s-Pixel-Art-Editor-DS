@@ -127,6 +127,7 @@ u32 kUp = 0;
 bool stylusPressed = false;
 bool showGrid = false;
 bool drew = false;
+bool acurrate = false;
 int gridSkips = 0;
 
 enum {
@@ -177,10 +178,10 @@ if ( key < 0 ) return;
         }
     }
 }
-//función para pasar de RAM a VRAM
+//función para pasar copiar datos rápidamente
 extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes);
 
-inline void submitVRAM()
+void submitVRAM()
 {
     // ====== Cálculo de offsets y tamaños ======
     const int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset;
@@ -189,26 +190,37 @@ inline void submitVRAM()
 
     u16* srcTop = pixelsTop + offset;
     u16* dstTop = pixelsTopVRAM + offset;
+    u16* srcBottom = pixels;
+    u16* dstBottom = pixelsVRAM;
 
-    // ====== Flush caché antes de cualquier transferencia ======
-    DC_FlushRange(srcTop, sizeTop);
-    DC_FlushRange(pixels, sizeBottom);
+    // ====== Flush de caché antes de transferir ======
+    if(acurrate = true){
+        DC_FlushRange(srcTop, sizeTop);
+        DC_FlushRange(srcBottom, sizeBottom);
+    }
 
-    // ====== 1. Iniciar DMA3 para pantalla inferior ======
-    DMA3_CR = 0; // aseguramos que esté parado
-    DMA3_SRC = (u32)pixels;
-    DMA3_DEST = (u32)pixelsVRAM;
-    DMA3_CR = (sizeBottom >> 1) | DMA_ENABLE; // copia en halfwords
+    // ====== Asegurar que DMA0 y DMA1 estén detenidos ======
+    DMA0_CR = 0;
+    DMA1_CR = 0;
 
-    // ====== 2. Mientras DMA copia, ARM9 copia la pantalla superior ======
-    memcpy_fast_arm9(srcTop, dstTop, sizeTop);
+    // ====== Iniciar DMA0 -> pantalla superior ======
+    DMA0_SRC  = (u32)srcTop;
+    DMA0_DEST = (u32)dstTop;
+    DMA0_CR   = (sizeTop >> 1) | DMA_ENABLE;  // Halfwords
 
-    // ====== 3. Esperar a que termine el DMA antes de continuar ======
-    while (DMA3_CR & DMA_ENABLE); // espera completado
+    // ====== Iniciar DMA1 -> pantalla inferior ======
+    DMA1_SRC  = (u32)srcBottom;
+    DMA1_DEST = (u32)dstBottom;
+    DMA1_CR   = (sizeBottom >> 1) | DMA_ENABLE;  // Halfwords
 
-    // ====== (Opcional) Flush final si VRAM se usará en GPU inmediatamente ======
-    DC_FlushRange(pixelsVRAM, sizeBottom);
-    DC_FlushRange(pixelsTopVRAM, sizeTop);
+    // ====== Esperar a que ambos terminen ======
+    while (DMA0_CR & DMA_ENABLE || DMA1_CR & DMA_ENABLE);
+
+    // ====== Flush final si VRAM se usará en GPU inmediatamente ======
+    if(acurrate = true){
+        DC_FlushRange(dstTop, sizeTop);
+        DC_FlushRange(dstBottom, sizeBottom);
+    }
 }
 
 inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
@@ -244,16 +256,18 @@ inline void drawGrid(u16 color){
 //por algún motivo inline bajaba el rendimiento
 //este era el código antiguo de renderizado, el nuevo es más rápido, pero altamente distinto y específico, conservo esto solo por si acaso
 
-void drawSurfaceMain(int xsize = 7,int ysize = 7)
+void drawSurfaceMain(bool full = true)
 {
-    int xres = 1<<xsize;   // ancho
-    int yres = 1<<ysize;   // alto
-
+    int xres = 1<<surfaceXres;   // ancho
+    int yres = 1<<surfaceYres;   // alto
+    if(full){
+        int from = subSurfaceXoffset+(subSurfaceYoffset<<surfaceXres);
+    }
     if(paletteOffset == 0)
     {
         for(int i = 0; i < yres; i++) // eje Y
         {
-            int _y = i <<xsize; // fila en surface
+            int _y = i <<surfaceXres; // fila en surface
             int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
 
             for(int j = 0; j < xres; j++) // eje X
@@ -266,7 +280,7 @@ void drawSurfaceMain(int xsize = 7,int ysize = 7)
     {
         for(int i = 0; i < yres; i++) // eje Y
         {
-            int _y = i <<xsize; // fila en surface
+            int _y = i <<surfaceXres; // fila en surface
             int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
 
             for(int j = 0; j < xres; j++) // eje X
@@ -282,58 +296,62 @@ extern "C" void __attribute__((target("arm"))) drawSurfaceBottom8x(u16*, u16*, i
 extern "C" void __attribute__((target("arm"))) drawSurfaceBottom16x(u16*, u16*, int, int);
 extern "C" void __attribute__((target("arm"))) drawSurfaceBottom32x(u16*, u16*, int, int);
 
-void drawSurfaceBottom(int xsize = 7, int ysize = 7) {
-    int xres = 1 << xsize;
-    int yres = 1 << ysize;
+__attribute__((optimize("jump-tables")))
+void drawSurfaceBottom(){
+    int xres = 1 << surfaceXres;
+    int yres = 1 << surfaceYres;
 
     u16 *srcBase = pixelsTop + ((mainSurfaceYoffset + subSurfaceYoffset) << 8) + (mainSurfaceXoffset + subSurfaceXoffset);
     u16 *dstBase = pixels + 64; // centrado
 
-    // rama sin zoom: copia directa por DMA
-    if(subSurfaceZoom == 0 && xres == 128) {
-        yres = (yres - 1) & 127;
-        yres++;
-        for(int i = 0; i < yres; i++) {
-            u16* src = pixelsTop + ((i + mainSurfaceYoffset) << 8) + mainSurfaceXoffset;
-            u16* dst = pixels + ((i << 8) + 64);
-            memcpy_fast_arm9(src, dst, 256);
-        }
-        return;
-    }else if(subSurfaceZoom == 1){
-        drawSurfaceBottom2x(srcBase, dstBase, 512, 512);
-    }else if(subSurfaceZoom == 2){
-        drawSurfaceBottom4x(srcBase, dstBase, 512, 512);
-    }else if(subSurfaceZoom == 3){
-        drawSurfaceBottom8x(srcBase, dstBase, 512, 512);
-    }else if(subSurfaceZoom == 4){
-        drawSurfaceBottom16x(srcBase, dstBase, 512, 512);
-    }else if(subSurfaceZoom == 5){
-        drawSurfaceBottom32x(srcBase, dstBase, 512, 512);
-    }
-    else{//fórmula general
-        //calcular offsets y repeticiones
-        int blockSize = 128 >> subSurfaceZoom;
-        int yrepeat   = 1 << subSurfaceZoom;
-        int xoffset   = subSurfaceXoffset;
-        int yoffset   = subSurfaceYoffset;
-
-        int dstY = 0;// fila destino
-
-        for (int i = 0; i < blockSize; i++) {
-            int srcY = i + mainSurfaceYoffset + yoffset;
-            u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
-
-            for (int k = 0; k < yrepeat; k++) {
-                u16* dstRow = pixels + (dstY << 8) + 64;
-
-                for (int j = 0; j < 128; j++) {
-                    dstRow[j] = srcRow[j >> subSurfaceZoom];
-                }
-                dstY++;
+    switch (subSurfaceZoom) {
+        case 0:
+            yres = (yres - 1) & 127;
+            yres++;
+            for (int i = 0; i < yres; i++) {
+                u16* src = pixelsTop + ((i + mainSurfaceYoffset) << 8) + mainSurfaceXoffset;
+                u16* dst = pixels + ((i << 8) + 64);
+                memcpy_fast_arm9(src, dst, 256);
             }
-        }
+            break;
+
+        case 1: drawSurfaceBottom2x(srcBase, dstBase, 512, 512); break;
+        case 2: drawSurfaceBottom4x(srcBase, dstBase, 512, 512); break;
+        case 3: drawSurfaceBottom8x(srcBase, dstBase, 512, 512); break;
+        case 4: drawSurfaceBottom16x(srcBase, dstBase, 512, 512); break;
+        case 5: drawSurfaceBottom32x(srcBase, dstBase, 512, 512); break;
+
+        default:
+            // fórmula general
+            {
+                int blockSize = 128 >> subSurfaceZoom;
+                int yrepeat   = 1 << subSurfaceZoom;
+                int xoffset   = subSurfaceXoffset;
+                int yoffset   = subSurfaceYoffset;
+
+                int dstY = 0;
+
+                for (int i = 0; i < blockSize; i++) {
+                    int srcY = i + mainSurfaceYoffset + yoffset;
+                    u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
+
+                    for (int k = 0; k < yrepeat; k++) {
+                        u16* dstRow = pixels + (dstY << 8) + 64;
+
+                        for (int j = 0; j < 128; j++) {
+                            dstRow[j] = srcRow[j >> subSurfaceZoom];
+                        }
+                        dstY++;
+                    }
+                }
+            }
+            break;
     }
-    if(showGrid == true){drawGrid(AVinvertColor(palette[paletteOffset]));}
+
+    if (showGrid) {
+        drawGrid(AVinvertColor(palette[paletteOffset]));
+    }
+
 }
 
 void drawColorPalette()// optimizable (DMA)
@@ -416,8 +434,8 @@ void updatePal(int increment, int *palettePos)
             paletteOffset = (posy<<4)+((posx>>2)<<2);
         }
         if(prevOffset != paletteOffset){//se cambió la paleta, necesita actualizar la pantalla
-            drawSurfaceMain(surfaceXres,surfaceYres);
-            drawSurfaceBottom(surfaceXres,surfaceYres);
+            drawSurfaceMain(true);
+            drawSurfaceBottom();
         }
     }
     AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
@@ -485,8 +503,8 @@ void initBitmap()
     clearTopBitmap();
 
     updatePal(0, &palettePos);
-    drawSurfaceMain(surfaceXres, surfaceYres);
-    drawSurfaceBottom(surfaceXres, surfaceYres);
+    drawSurfaceMain(true);
+    drawSurfaceBottom();
 }
 
 void setEditorSprites(){
@@ -578,7 +596,7 @@ int getActionsFromTouch(int button) {
 
         case 3://showGrid
             showGrid = !showGrid;
-            drawSurfaceBottom(surfaceXres,surfaceYres);
+            drawSurfaceBottom();
         break;
         case 7://unused
 
@@ -997,7 +1015,7 @@ int main(void) {
             }
             if(kDown & KEY_R || kDown & KEY_Y){
                 showGrid = !showGrid;
-                drawSurfaceBottom(surfaceXres,surfaceYres);
+                drawSurfaceBottom();
             }
             //===========================================PALETAS=========================================================
             palettePos = palettePos & (paletteSize-1);//mantiene la paleta dentro de un límite
@@ -1019,8 +1037,8 @@ int main(void) {
                         prevtpx = srcX;
                         prevtpy = srcY;
 
-                        drawSurfaceMain(surfaceXres, surfaceYres);
-                        drawSurfaceBottom(surfaceXres, surfaceYres);
+                        drawSurfaceMain(false);
+                        drawSurfaceBottom();
                         drew = true;
                         stylusPressed = true;
                     }
@@ -1077,11 +1095,11 @@ int main(void) {
                                 break;
                                 case 2://cut
                                     cutFromSurfaceToStack(surfaceXres-subSurfaceZoom,surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(false);drawSurfaceBottom();
                                 break;
                                 case 3://Paste
                                     pasteFromStackToSurface(subSurfaceXoffset, subSurfaceYoffset);
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(true);drawSurfaceBottom();
                                 break;
                             }
                             stylusPressed = true;
@@ -1095,30 +1113,30 @@ int main(void) {
                             {
                                 case 0://rotate -90°
                                     rotateNegative();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(false);drawSurfaceBottom();
                                 break;
                                 case 1://rotate 90°
                                     rotatePositive();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(false);drawSurfaceBottom();
                                 break;
                                 case 2:
                                     flipV();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(false);drawSurfaceBottom();
                                 break;
                                 case 3:
                                     flipH();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(false);drawSurfaceBottom();
                                 break;
 
                                 case 6:
                                     //verificar si es posible escalar
                                     scaleUp();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(true);drawSurfaceBottom();
                                 break;
 
                                 case 7:
                                     scaleDown();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(false);drawSurfaceBottom();
                                 break;
 
                                 case 26: //undo
@@ -1127,7 +1145,7 @@ int main(void) {
                                         backupIndex = backupMax;
                                     }
                                     backupRead();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(true);drawSurfaceBottom();
                                 break;
                                 
                                 case 27: //redo
@@ -1136,7 +1154,7 @@ int main(void) {
                                         backupIndex = 0;
                                     }
                                     backupRead();
-                                    drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                                    drawSurfaceMain(true);drawSurfaceBottom();
                                 break;
 
                             }
@@ -1168,7 +1186,7 @@ int main(void) {
 
                             u16 _col = nesPalette[index];
                             AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
-                            drawSurfaceMain(surfaceXres, surfaceYres);drawSurfaceBottom(surfaceXres, surfaceYres);
+                            drawSurfaceMain(true);drawSurfaceBottom();
 
                             palette[palettePos] = _col;
                             //dibujar el contorno del color seleccionado
@@ -1195,11 +1213,11 @@ int main(void) {
                             //dibujar en la pantalla
                             AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                             
-                            drawSurfaceMain(surfaceXres, surfaceYres);
-                            drawSurfaceBottom(surfaceXres, surfaceYres);//actualizar surface, sí, es necsario
+                            drawSurfaceMain(true);
+                            drawSurfaceBottom();//actualizar surface, sí, es necsario
 
                             //dibujar arriba el nuevo color generado
-                            AVdrawRectangleDMA(pixels,192,64,32,8,_col,8);
+                            AVdrawRectangle(pixels,192,64,32,8,_col);
 
                             //dibujar el contorno del color seleccionado
                             _col = AVinvertColor(_col);
@@ -1277,6 +1295,10 @@ int main(void) {
                         initBitmap();
                         bitmapMode();//simplemente salir de este menú
                         drawColorPalette();
+                        if(selector == 3){
+                            nesMode = true;
+                            drawNesPalette();
+                        }
                     }
                     //touch input
                     if(kDown & KEY_TOUCH){
@@ -1423,8 +1445,7 @@ int main(void) {
                                 break;
                             }
                             bitmapMode();
-                            drawSurfaceBottom(surfaceXres,surfaceYres);
-                            drawSurfaceMain(surfaceXres,surfaceYres);
+                            drawSurfaceMain(true);drawSurfaceBottom();
                             drawColorPalette();
                             setBackupVariables();
                         }

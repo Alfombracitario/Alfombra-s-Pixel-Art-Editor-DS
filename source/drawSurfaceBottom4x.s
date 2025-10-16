@@ -47,7 +47,7 @@ vertical_copy_loop:
     mov     r10, r4          @ r10 = origen (fila base)
     mov     r11, #256      @ r11 = bytes a copiar (32 píxeles * 4 copias * 2 bytes = 256)
 
-copy_loop: @funciona
+copy_loop:
     ldr     r8, [r10], #4    @ Cargar 2 píxeles (4 bytes)
     str     r8, [r9], #4     @ Almacenar 2 píxeles
     subs    r11, r11, #4     @ Decrementar contador de bytes
