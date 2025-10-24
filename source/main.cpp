@@ -8,6 +8,7 @@
     No redibujar todo al pintar
     Poder cambiar el tamaño o tipo de pincel
     mejorar el sistema de guardado/cargado
+    arreglar el grid
 
 */
 #include <nds.h>
@@ -17,6 +18,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <string>
 
 #include "avdslib.h"
 #include "formats.h"
@@ -62,7 +64,8 @@ u16 pixels[49152];
 u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
-u16 backup[131072];//para undo/redo y cargar imagenes 256kb
+u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
+//ideal añadir un array para guardar más frames
 int backupMax = 8;
 int backupSize = 16384;
 
@@ -117,8 +120,6 @@ subMode currentSubMode = SUB_BITMAP;
 enum consoleMode { MODE_NO, LOAD_file, SAVE_file, IMAGE_SETTINGS, MODE_NEWIMAGE};
 consoleMode currentConsoleMode = MODE_NO;
 
-int selector = 0;//selector para la consola
-int selectorA = 0;//selector secundario
 int resX = 7;
 int resY = 7;
 u32 kDown = 0;
@@ -128,6 +129,8 @@ bool stylusPressed = false;
 bool showGrid = false;
 bool drew = false;
 bool acurrate = false;
+bool updated = false;
+bool mayus = false;
 int gridSkips = 0;
 
 enum {
@@ -149,10 +152,124 @@ typedef enum {
 
 ToolType currentTool = TOOL_BRUSH; // por defecto
 
-Keyboard *kbd = keyboardDemoInit();
-char text[16];
 
-char path[128];//ubicación del archivo
+char text[16];
+//archivos
+#define MAX_FILES 256
+#define MAX_NAME_LEN 32   // temporal para el nombre completo del archivo
+#define SCREEN_LINES 20   // cuántos archivos caben en pantalla
+
+DIR* currentDir = NULL;
+struct dirent entryList[MAX_FILES];  // usamos memoria estática
+int fileCount = 0;
+
+char path[257] = "/";  // ruta actual
+char format[6];
+
+int selector = 0;//selector para la consola
+int selectorA = 0;//selector secundario
+
+int enterFolder(int index) {
+    if(index < 0 || index >= fileCount) return 0;
+
+    if(entryList[index].d_type == DT_DIR) {
+        char newPath[256];
+        snprintf(newPath, sizeof(newPath), "%s%s/", path, entryList[index].d_name);
+        strncpy(path, newPath, sizeof(path));
+
+        // abrir nuevo directorio
+        if(currentDir) closedir(currentDir);
+        currentDir = opendir(path);
+        selector = 0;
+        return 1; // carpeta abierta
+    }
+    return 0; // no es carpeta
+}
+int goBack() {
+    if(strcmp(path, "/") == 0) return 0; // ya en raíz
+
+    // quitar última carpeta
+    char* lastSlash = strrchr(path, '/');
+    if(lastSlash != path) {
+        *lastSlash = '\0';
+        lastSlash = strrchr(path, '/');
+        *(lastSlash+1) = '\0';
+    } else {
+        path[1] = '\0';
+    }
+
+    // abrir carpeta padre
+    if(currentDir) closedir(currentDir);
+    currentDir = opendir(path);
+    selector = 0;
+    return 1;
+}
+void listFiles() {
+    if(!currentDir) return;
+
+    fileCount = 0;
+    struct dirent* ent;
+    rewinddir(currentDir);
+
+    // Leer entradas
+    while((ent = readdir(currentDir)) != NULL && fileCount < MAX_FILES) {
+        entryList[fileCount++] = *ent;
+    }
+
+    // --- (1) Ordenar alfabéticamente ---
+    for(int i = 0; i < fileCount - 1; i++) {
+        for(int j = i + 1; j < fileCount; j++) {
+            // Ordenar carpetas y archivos juntos alfabéticamente
+            if(strcasecmp(entryList[i].d_name, entryList[j].d_name) > 0) {
+                struct dirent temp = entryList[i];
+                entryList[i] = entryList[j];
+                entryList[j] = temp;
+            }
+        }
+    }
+
+    // --- (2) Mostrar en pantalla ---
+    int start = selector;
+    if(start + SCREEN_LINES > fileCount) start = fileCount - SCREEN_LINES;
+    if(start < 0) start = 0;
+
+    for(int i = 0; i < SCREEN_LINES && (start + i) < fileCount; i++) {
+        const char* name = entryList[start + i].d_name;
+        bool isDir = (entryList[start + i].d_type == DT_DIR);
+        char displayName[32];
+
+        if(isDir) {
+            // Carpeta: recortar si es demasiado largo
+            int len = strlen(name);
+            if(len > 27) { // deja 4 para "..."
+                snprintf(displayName, sizeof(displayName), "%.24s.../", name);
+            } else {
+                snprintf(displayName, sizeof(displayName), "%s/", name);
+            }
+        } else {
+            // Archivo: mantener extensión visible
+            const char* dot = strrchr(name, '.');
+            if(dot && strlen(name) > 27) {
+                // nombre demasiado largo: mostrar parte inicial + extensión
+                int extLen = strlen(dot);
+                int keep = 27 - extLen - 3; // 3 para "..."
+                if(keep < 1) keep = 1;
+                snprintf(displayName, sizeof(displayName), "%.*s...%s", keep, name, dot);
+            } else if(strlen(name) > 27) {
+                snprintf(displayName, sizeof(displayName), "%.27s...", name);
+            } else {
+                strcpy(displayName, name);
+            }
+        }
+
+        // Mostrar con selector
+        if(start + i == selector)
+            iprintf("> %s\n", displayName);
+        else
+            iprintf("  %s\n", displayName);
+    }
+}
+
 
 void OnKeyPressed(int key) {
 if ( key < 0 ) return;
@@ -194,7 +311,7 @@ void submitVRAM()
     u16* dstBottom = pixelsVRAM;
 
     // ====== Flush de caché antes de transferir ======
-    if(acurrate = true){
+    if(acurrate == true){
         DC_FlushRange(srcTop, sizeTop);
         DC_FlushRange(srcBottom, sizeBottom);
     }
@@ -217,7 +334,7 @@ void submitVRAM()
     while (DMA0_CR & DMA_ENABLE || DMA1_CR & DMA_ENABLE);
 
     // ====== Flush final si VRAM se usará en GPU inmediatamente ======
-    if(acurrate = true){
+    if(acurrate == true){
         DC_FlushRange(dstTop, sizeTop);
         DC_FlushRange(dstBottom, sizeBottom);
     }
@@ -246,7 +363,7 @@ inline void drawGrid(u16 color){
     int rep = (128>>subSurfaceZoom)>>gridSkips;
     for(int i = 0; i < rep; i++)
     {
-        AVdrawHlineDMA(pixels,64,192,i*separation,color);
+        AVdrawHline(pixels,64,192,i*separation,color);
         AVdrawVline(pixels,0,128,64+(i*separation),color);
     }
 }
@@ -260,9 +377,9 @@ void drawSurfaceMain(bool full = true)
 {
     int xres = 1<<surfaceXres;   // ancho
     int yres = 1<<surfaceYres;   // alto
-    if(full){
-        int from = subSurfaceXoffset+(subSurfaceYoffset<<surfaceXres);
-    }
+    //if(full){
+    //    int from = subSurfaceXoffset+(subSurfaceYoffset<<surfaceXres);
+    //}
     if(paletteOffset == 0)
     {
         for(int i = 0; i < yres; i++) // eje Y
@@ -298,7 +415,7 @@ extern "C" void __attribute__((target("arm"))) drawSurfaceBottom32x(u16*, u16*, 
 
 __attribute__((optimize("jump-tables")))
 void drawSurfaceBottom(){
-    int xres = 1 << surfaceXres;
+    updated = true;
     int yres = 1 << surfaceYres;
 
     u16 *srcBase = pixelsTop + ((mainSurfaceYoffset + subSurfaceYoffset) << 8) + (mainSurfaceXoffset + subSurfaceXoffset);
@@ -347,11 +464,6 @@ void drawSurfaceBottom(){
             }
             break;
     }
-
-    if (showGrid) {
-        drawGrid(AVinvertColor(palette[paletteOffset]));
-    }
-
 }
 
 void drawColorPalette()// optimizable (DMA)
@@ -531,6 +643,7 @@ inline void textMode()
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
 
     oamClear(&oamSub, 0, 128);
+    
 }
 
 inline void bitmapMode()
@@ -636,11 +749,61 @@ void applyActions(int actions) {//acciones compartidas entre teclas y touch
     if(subSurfaceXoffset > maxX)  subSurfaceXoffset = maxX;
     if(subSurfaceYoffset > maxY)  subSurfaceYoffset = maxY;
 }
-
+const char *keyboardLower = "1234567890()#@qwertyuiop[]$^asdfghjkl/{}%!|zxcvbnm>>-_~=<<      ,.'`;+";
+const char *keyboardUpper = "1234567890()#@QWERTYUIOP[]$^ASDFGHJKL/{}%!|ZXCVBNM>>-_~=<<      ,.'`;+";
 char getKeyboardKey(int x, int y){
-    
+    //primero arreglamos las teclas a un margen
+    x=(x>>4)-1;//dividir en 16
+
+    y = (y>>4)-7;//pasar a un rango de 0 a 5
+
+    //combinar a una sola variable
+    x = x+(y*14);
+
+    //convertir el valor a un dato 
+    const char *output = mayus ? keyboardUpper : keyboardLower;
+    return output[x];
 }
 
+void handleKey(char key) {
+    int len = strlen(text);
+
+    switch (key) {
+        case '/': // borrar
+            if (len > 0) text[len - 1] = '\0';
+            break;
+
+        case '|': // alternar mayúsculas
+            mayus = !mayus;
+            break;
+
+        case '>': // enter
+            // aquí podrías procesar el texto completo, por ejemplo:
+            // guardarTexto(text);
+            // limpiar el buffer si quieres:
+            text[0] = '\0';
+            break;
+
+        case '<': // salir
+            // aquí pones tu código de salida o retorno
+            // por ejemplo:
+            // returnToMenu();
+            break;
+
+        default:
+            // agregar carácter normal
+            if (len < 15 && key != '\0') {
+                // si mayúsculas activadas y es letra
+                if (mayus && key >= 'a' && key <= 'z') {
+                    key -= 32; // convierte a mayúscula ('a' → 'A')
+                }
+
+                text[len] = key;
+                text[len + 1] = '\0';
+            }
+            break;
+    }
+}
 void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {// NECESITA SER ARREGLADO (overflow)
     if (oldColor == newColor) return;
     if (surface[(y << xres) + x] != oldColor) return;
@@ -929,6 +1092,10 @@ int main(void) {
 
     // Intentar montar la SD
     bool sd_ok = fatInitDefault();
+    if(sd_ok){
+        chdir("sd:/");
+        currentDir = opendir("/");
+    }
 
     // poner pantalla inferior en modo texto temporal
     videoSetModeSub(MODE_0_2D);
@@ -983,9 +1150,6 @@ int main(void) {
 
         //reiniciar algunos inputs
         int actions = ACTION_NONE;
-
-        // salir con START
-        if(kDown & KEY_START) break;
 
         // keys
         if(currentSubMode == SUB_BITMAP)
@@ -1235,8 +1399,6 @@ int main(void) {
                             stylusPressed = true;
                         }
                     }
-
-
                 }
             }
             else{
@@ -1251,28 +1413,38 @@ int main(void) {
                 applyActions(actions);
                 drawSurfaceBottom();
             }
+            if(showGrid && updated == true){drawGrid(AVinvertColor(palette[paletteOffset])); updated = false;}
             submitVRAM();
         }
         else//=======================================CONSOLA DE TEXTO=======================================>
         {
             textConsole:
                 swiWaitForVBlank();
-                consoleClear();
+                bool redraw = false;
+                if(kDown){redraw = true;}
+                if(redraw){
+                    consoleClear();
+                }
 
-                if(kDown & KEY_B)
+                if(kDown & KEY_SELECT)
                 {
                     bitmapMode();//simplemente salir de este menú
                 }
                 if(currentConsoleMode == MODE_NEWIMAGE)
                 {
                     int bpps[4]={2,4,8,2};
+                    if(redraw){
                     iprintf("Create new file:\n");
                     iprintf("Resolution: %d",1<<resX);
                     iprintf("x%d",1<<resY);
                     iprintf("\nColors:%d",1<<selectorA);
+
                     if(selector == 3){
                         iprintf("\nNes mode");
                     }
+
+                    }
+
 
                     if(kDown & KEY_RIGHT)
                     {
@@ -1286,7 +1458,7 @@ int main(void) {
                         if(selector < 0){selector = 3;}
                         selectorA = bpps[selector];
                     }
-                    if(kDown & KEY_A)
+                    if(kDown & KEY_START)
                     {
                         surfaceXres = resX;
                         surfaceYres = resY;
@@ -1329,10 +1501,9 @@ int main(void) {
                     
                     if(currentConsoleMode == SAVE_file)
                     {
-                        iprintf("Save file:\n");
-                        if(kDown & KEY_A)//se guarda el archivo
+                        if(kDown & KEY_START)//se guarda el archivo
                         {
-                            sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                            sprintf(path,"%s%s",text,format);
                             switch(selectorA)
                             {
                                 default:
@@ -1351,35 +1522,27 @@ int main(void) {
                                 break;
 
                                 case 3://NES
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
                                     exportNES(path,surface,1<<surfaceYres);
                                 break;
                                 case 4://GameBoy
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGbc.bin", selector);
                                     exportGBC(path,surface,1<<surfaceYres);
                                 break;
-                                case 5://SNES
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.bin", selector);                                                                                   
+                                case 5://SNES                                                         
                                     exportSNES(path,surface,1<<surfaceYres);
                                 break;
                                 case 6://GBA
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGba.bin", selector);                                                                                   
                                     exportGBA(path,surface,1<<surfaceYres);
                                 break;
-                                case 7://PCX
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pcx", selector);                                                                                   
+                                case 7://PCX                                                                             
                                     exportPCX(path,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                                 case 8: //Pal
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
                                     exportPal(path);
                                 break;
                                 case 9://Gif
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.gif", selector);
                                     exportGIF(path,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                                 case 10://Tga
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.tga", selector);
                                     exportTGA(path,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                             }
@@ -1387,11 +1550,10 @@ int main(void) {
                         }
                     }
                     else{
-                        iprintf("Load file:\n");
-                        if(kDown & KEY_A)//se carga el archivo
+                        if(kDown & KEY_START)//se carga el archivo
                         {
                             //variables predeterminadas
-                            sprintf(path, "sd:/AlfombraPixelArtEditor/%d.bmp", selector);
+                            sprintf(path,"%s%s",text,format);
                             nesMode = false;
                             switch(selectorA)
                             {
@@ -1407,40 +1569,32 @@ int main(void) {
                                     paletteBpp = 4;
                                 break;
                                 case 3://NES
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dNes.bin", selector);
                                     importNES(path,surface);
                                     paletteBpp = 2;nesMode = true;
                                     drawNesPalette();
                                 break;
                                 case 4://GBC
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGbc.bin", selector);
                                     importGBC(path,surface);
                                     paletteBpp = 2;
                                 break;
                                 case 5://SNES
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dSnes.bin", selector);
                                     importSNES(path,surface);
                                     paletteBpp = 4;
                                 break;
                                 case 6://GBA
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%dGba.bin", selector);
                                     importGBA(path,surface);
                                     paletteBpp = 4;
                                 break;
                                 case 7://PCX
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pcx", selector);
                                     importPCX(path,surface);
                                 break;
                                 case 8://PAL
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.pal", selector);
                                     importPal(path);
                                 break;
                                 case 9://GIF
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.gif", selector);
                                     importGIF(path,surface);
                                 break;
                                 case 10://TGA
-                                    sprintf(path, "sd:/AlfombraPixelArtEditor/%d.tga", selector);
                                     importTGA(path,surface);
                                 break;
                             }
@@ -1456,20 +1610,66 @@ int main(void) {
                     if(kDown & KEY_UP && selector > 0){selector--;}
                     if(kDown & KEY_DOWN){selector++;}
                     char texts[11][32] = {
-                        ".bmp direct",
-                        ".bmp 8bpp",
-                        ".bmp 4bpp",
-                        "NES",
-                        "GB",
-                        "SNES",
-                        "GBA",
+                        ".bmp [direct]",
+                        ".bmp [8bpp]",
+                        ".bmp [4bpp]",
+                        ".bin [NES]",
+                        ".bin [GB]",
+                        ".bin [SNES]",
+                        ".bin [GBA]",
                         ".pcx",
                         ".pal",
                         ".gif",
                         ".tga"
                     };
-                    iprintf("Image: %d",selector);
-                    iprintf("\nFormat: %s",texts[selectorA]);
+                    char formats[11][6] = {
+                        ".bmp",
+                        ".bmp",
+                        ".bmp",
+                        ".bin",
+                        ".bin",
+                        ".bin",
+                        ".bin",
+                        ".pcx",
+                        ".pal",
+                        ".gif",
+                        ".tga"
+                    };
+                    strcpy(format,formats[selectorA]);
+                    //obtener información del teclado
+                    if(kDown & KEY_TOUCH){
+                        if(touch.py > 112){
+                            char key = getKeyboardKey(touch.px, touch.py);
+                            if (key != '\0') handleKey(key);
+                        }
+                    }
+                    if(kDown & KEY_A) {
+                        if(selector < 0 || selector >= fileCount)
+                        {
+                            iprintf("Error");
+                        } // seguridad
+                        else{
+                            if(entryList[selector].d_type == DT_DIR) {
+                                // si es carpeta, entramos
+                                enterFolder(selector);
+                            } else {
+                                kDown = KEY_START;
+                                goto textConsole;
+                            }
+                        }
+                    }
+                    if(kDown & KEY_B) {
+                        goBack();
+                    }
+                    if(redraw){
+                        iprintf(text);//nombre del archivo
+                        iprintf(texts[selectorA]);//extensión + información extra
+                        //separar para mostrar el explorador
+                        iprintf("\n-------------------------------\n");
+                        printf(path);
+                        printf("\n");
+                        listFiles();//dibujar información del explorador
+                    }
                 }
         }
         swiWaitForVBlank();

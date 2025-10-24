@@ -24,6 +24,7 @@ void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color
 void AVdrawRectangleHollow(u16* arr, int x, int width, int y, int height, u16 color);
 
 void AVdrawVline(u16* arr, int y0, int y1, int x, u16 color);
+void AVdrawHline(u16* arr, int x0, int x1, int y, u16 color);
 void AVdrawHlineDMA(u16* arr, int x0, int x1, int y, u16 color);
 
 //planeo crear la función para cargar .acs y guardarlo

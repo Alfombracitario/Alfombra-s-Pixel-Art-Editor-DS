@@ -96,6 +96,12 @@ void AVdrawVline(u16* arr,int y0, int y1, int x, u16 color){
         arr[i] = color;
     }
 }
+void AVdrawHline(u16* arr, int x0, int x1, int y, u16 color) {
+    y = y<<8;
+    for(int i = x0; i < x1; i++){
+        arr[i+y] = color;
+    }
+}
 
 void AVdrawHlineDMA(u16* arr, int x0, int x1, int y, u16 color) {
     dmaFillHalfWords(color, &arr[(y << 8) + x0], (x1 - x0) << 1);
