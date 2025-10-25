@@ -47,6 +47,9 @@
 #define C_BLACK 32768
 #define C_GRAY 48623
 
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 //static PrintConsole bottomConsole;
@@ -66,6 +69,9 @@ u16 palette[256];
 u16 stack[16384];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
 //ideal añadir un array para guardar más frames
+
+touchPosition touch;
+
 int backupMax = 8;
 int backupSize = 16384;
 
@@ -128,8 +134,8 @@ u32 kUp = 0;
 bool stylusPressed = false;
 bool showGrid = false;
 bool drew = false;
-bool acurrate = false;
 bool updated = false;
+bool acurrate = false;
 bool mayus = false;
 int gridSkips = 0;
 
@@ -298,12 +304,12 @@ if ( key < 0 ) return;
 //función para pasar copiar datos rápidamente
 extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes);
 
-void submitVRAM()
+void submitVRAM(bool full = false, bool _acurrate = false)
 {
     // ====== Cálculo de offsets y tamaños ======
-    const int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset;
-    const int sizeTop = 512 << surfaceYres;   // Tamaño top (512, 1024, etc.)
-    const int sizeBottom = 98304;             // Tamaño fijo pantalla inferior
+    const int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset;//offset de la pantalla superior
+    const int sizeTop = 512 << surfaceYres;   // Tamaño top
+    int sizeBottom = full ? 98304 : 65536;
 
     u16* srcTop = pixelsTop + offset;
     u16* dstTop = pixelsTopVRAM + offset;
@@ -311,7 +317,7 @@ void submitVRAM()
     u16* dstBottom = pixelsVRAM;
 
     // ====== Flush de caché antes de transferir ======
-    if(acurrate == true){
+    if(_acurrate == true){
         DC_FlushRange(srcTop, sizeTop);
         DC_FlushRange(srcBottom, sizeBottom);
     }
@@ -334,7 +340,7 @@ void submitVRAM()
     while (DMA0_CR & DMA_ENABLE || DMA1_CR & DMA_ENABLE);
 
     // ====== Flush final si VRAM se usará en GPU inmediatamente ======
-    if(acurrate == true){
+    if(_acurrate == true){
         DC_FlushRange(dstTop, sizeTop);
         DC_FlushRange(dstBottom, sizeBottom);
     }
@@ -371,8 +377,6 @@ inline void drawGrid(u16 color){
 //=========================================================DRAW SURFACE========================================================================
 
 //por algún motivo inline bajaba el rendimiento
-//este era el código antiguo de renderizado, el nuevo es más rápido, pero altamente distinto y específico, conservo esto solo por si acaso
-
 void drawSurfaceMain(bool full = true)
 {
     int xres = 1<<surfaceXres;   // ancho
@@ -416,16 +420,13 @@ extern "C" void __attribute__((target("arm"))) drawSurfaceBottom32x(u16*, u16*, 
 __attribute__((optimize("jump-tables")))
 void drawSurfaceBottom(){
     updated = true;
-    int yres = 1 << surfaceYres;
 
     u16 *srcBase = pixelsTop + ((mainSurfaceYoffset + subSurfaceYoffset) << 8) + (mainSurfaceXoffset + subSurfaceXoffset);
     u16 *dstBase = pixels + 64; // centrado
 
     switch (subSurfaceZoom) {
-        case 0:
-            yres = (yres - 1) & 127;
-            yres++;
-            for (int i = 0; i < yres; i++) {
+        case 0://si no hay zoom
+            for (int i = 0; i < 128; i++) {//sí, siempre copiar las 128, es para arreglar errores visuales
                 u16* src = pixelsTop + ((i + mainSurfaceYoffset) << 8) + mainSurfaceXoffset;
                 u16* dst = pixels + ((i << 8) + 64);
                 memcpy_fast_arm9(src, dst, 256);
@@ -464,15 +465,17 @@ void drawSurfaceBottom(){
             }
             break;
     }
+    if(showGrid){drawGrid(AVinvertColor(palette[paletteOffset]));}
 }
 
-void drawColorPalette()// optimizable (DMA)
+void drawColorPalette()
 {
     for(int i = 0; i < 16; i++)//vertical
     {
         for(int j = 0; j < 16; j++)//horizontal
         {
             AVdrawRectangle(pixels,192+(j<<2),4,64+(i<<2),4,palette[(i<<4)+j]);
+            updated = true;
             
         }
     }
@@ -486,6 +489,7 @@ void drawNesPalette()
         for(int j = 0; j < 16; j++)//horizontal
         {
             AVdrawRectangle(pixels,192+(j<<2),4,48+(i<<2),4,nesPalette[(i<<4)+j]);
+            updated = true;
         }
     }
 }
@@ -497,6 +501,7 @@ void updatePal(int increment, int *palettePos)
     if(*palettePos + increment < 0 || *palettePos + increment > paletteSize){
         return;
     }
+    updated = true;
     
     //obtenemos la coordenada de la paleta
     int posx = *palettePos & 15;
@@ -663,7 +668,7 @@ inline void bitmapMode()
 
     clearTopBitmap();
     setEditorSprites();
-    submitVRAM();//recuperamos nuestros queridos datos
+    submitVRAM(true,true);//recuperamos nuestros queridos datos
 }
 //============================================================= SD CARD ===============================================|
 bool saveArray(const char *path, void *array, size_t size) {
@@ -719,6 +724,7 @@ int getActionsFromTouch(int button) {
 }
 
 void applyActions(int actions) {//acciones compartidas entre teclas y touch
+    acurrate = true;//queremos que se renderize todo correctamente
     int blockSize = (1 << surfaceXres) >> subSurfaceZoom;   // tamaño de bloque en píxeles según el zoom
     if(kHeld & KEY_L || kHeld & KEY_X) {
         // --- Scroll por bloques ---
@@ -748,6 +754,12 @@ void applyActions(int actions) {//acciones compartidas entre teclas y touch
     if(subSurfaceYoffset < 0)     subSurfaceYoffset = 0;
     if(subSurfaceXoffset > maxX)  subSurfaceXoffset = maxX;
     if(subSurfaceYoffset > maxY)  subSurfaceYoffset = maxY;
+    // --- Limitar el zoom ---
+    int maxRes = MAX(surfaceXres,surfaceYres);
+    int minZoom = 7-maxRes;
+    if(subSurfaceZoom < minZoom){
+            subSurfaceZoom = minZoom;
+    }
 }
 const char *keyboardLower = "1234567890()#@qwertyuiop[]$^asdfghjkl/{}%!|zxcvbnm>>-_~=<<      ,.'`;+";
 const char *keyboardUpper = "1234567890()#@QWERTYUIOP[]$^ASDFGHJKL/{}%!|ZXCVBNM>>-_~=<<      ,.'`;+";
@@ -861,7 +873,12 @@ void applyTool(int x, int y, bool dragging) {
 }
 //========================================= Herramientas extras=====================|
 //copia en el stack una parte de la imagen
-void copyFromSurfaceToStack(int xsize, int ysize, int xoffset = 0, int yoffset = 0) {
+void copyFromSurfaceToStack() {
+    int zoom = subSurfaceZoom-(7-MAX(surfaceXres,surfaceYres));//arreglar el zoom a todas las resoluciones
+    int xsize = surfaceXres - zoom;
+    int ysize = surfaceYres - zoom;
+    int xoffset = subSurfaceXoffset;
+    int yoffset = subSurfaceYoffset;
     stackXres = xsize;
     stackYres = ysize;
 
@@ -882,10 +899,10 @@ void copyFromSurfaceToStack(int xsize, int ysize, int xoffset = 0, int yoffset =
         src += surfaceW;
     }
 }
-void cutFromSurfaceToStack(int xsize, int ysize, int xoffset = 0, int yoffset = 0){
+void cutFromSurfaceToStack(){
     //copia pero limpia un fragmento de la pantalla
     //en vez de optimizar esto, lo haré de la manera más simple posible lol
-    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom, surfaceYres - subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+    copyFromSurfaceToStack();
     //limpiar la pantalla
     int blockSize = 128 >> subSurfaceZoom;
     AVdrawRectangleDMA(surface,subSurfaceXoffset,blockSize,subSurfaceYoffset,blockSize,0,surfaceXres);
@@ -909,7 +926,7 @@ void pasteFromStackToSurface(int xoffset = 0, int yoffset = 0)
 }
 
 void flipH() {
-    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom, surfaceYres - subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+    copyFromSurfaceToStack();
 
     int ysize = 1 << stackYres;
     int xsize = 1 << stackXres;
@@ -929,7 +946,7 @@ void flipH() {
  
 void flipV()
 {
-    copyFromSurfaceToStack(surfaceXres-subSurfaceZoom, surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+    copyFromSurfaceToStack();
     int ysize = 1 << stackYres;
     int xsize = 1 << stackXres;
 
@@ -946,10 +963,7 @@ void flipV()
 }
 
 void scaleUp(){
-    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom,
-                           surfaceYres - subSurfaceZoom,
-                           subSurfaceXoffset,
-                           subSurfaceYoffset);
+    copyFromSurfaceToStack();
 
     int stackW = 1 << stackXres;
     int stackH = 1 << stackYres;
@@ -979,10 +993,7 @@ void scaleUp(){
 
 
 void scaleDown(){
-    cutFromSurfaceToStack(surfaceXres - subSurfaceZoom,
-                           surfaceYres - subSurfaceZoom,
-                           subSurfaceXoffset,
-                           subSurfaceYoffset);
+    cutFromSurfaceToStack();
 
     //lee el stack saltandose un pixel
     int yres = (1<<stackYres)>>1;
@@ -1002,10 +1013,7 @@ void scaleDown(){
 }
 
 void rotatePositive() { // 90° Antihorario
-    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom,
-                           surfaceYres - subSurfaceZoom,
-                           subSurfaceXoffset,
-                           subSurfaceYoffset);
+    copyFromSurfaceToStack();
 
     int size = 1 << stackXres;
     int baseOffset = subSurfaceXoffset + (subSurfaceYoffset << surfaceXres);
@@ -1021,10 +1029,7 @@ void rotatePositive() { // 90° Antihorario
 
 
 void rotateNegative() { // 90° Horario
-    copyFromSurfaceToStack(surfaceXres - subSurfaceZoom,
-                           surfaceYres - subSurfaceZoom,
-                           subSurfaceXoffset,
-                           subSurfaceYoffset);
+    copyFromSurfaceToStack();
 
     int size = 1 << stackXres;
     int baseOffset = subSurfaceXoffset + (subSurfaceYoffset << surfaceXres);
@@ -1138,6 +1143,7 @@ int main(void) {
     setEditorSprites();
 
     setBackupVariables();
+
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
     while(pmMainLoop()) {
         scanKeys();
@@ -1145,7 +1151,6 @@ int main(void) {
         kHeld = keysHeld();
         kUp = keysUp();
 
-        touchPosition touch;
         touchRead(&touch);
 
         //reiniciar algunos inputs
@@ -1163,23 +1168,28 @@ int main(void) {
                 if(kDown & KEY_DOWN)
                 {
                     updatePal(16, &palettePos);
+                    goto frameEnd;
                 }
                 if(kDown & KEY_UP)
                 {
                     updatePal(-16, &palettePos);
+                    goto frameEnd;
                 }
                 if(kDown & KEY_LEFT)
                 {
                     updatePal(-1, &palettePos);
+                    goto frameEnd;
                 }
                 if(kDown & KEY_RIGHT)
                 {
                     updatePal(1, &palettePos);
+                    goto frameEnd;
                 }
             }
             if(kDown & KEY_R || kDown & KEY_Y){
                 showGrid = !showGrid;
                 drawSurfaceBottom();
+                goto frameEnd;
             }
             //===========================================PALETAS=========================================================
             palettePos = palettePos & (paletteSize-1);//mantiene la paleta dentro de un límite
@@ -1205,6 +1215,7 @@ int main(void) {
                         drawSurfaceBottom();
                         drew = true;
                         stylusPressed = true;
+                        goto frameEnd;
                     }
                 }
                 if(touch.px < 64)//apunta a la parte izquierda
@@ -1219,6 +1230,7 @@ int main(void) {
                         //además dibujamos un contorno en dónde seleccionamos
                         oamSetXY(&oamSub,0,col*24, (row*12)+16);//sprite 0 es el contorno 24x24
                         stylusPressed = true;
+                        goto frameEnd;
                     }
                     else//apunta a otra parte de la izquierda
                     {
@@ -1255,18 +1267,19 @@ int main(void) {
                             switch(selected)//puro hardcode lol
                             {
                                 case 1://Copy
-                                    copyFromSurfaceToStack(surfaceXres-subSurfaceZoom,surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+                                    copyFromSurfaceToStack();
                                 break;
                                 case 2://cut
-                                    cutFromSurfaceToStack(surfaceXres-subSurfaceZoom,surfaceYres-subSurfaceZoom, subSurfaceXoffset, subSurfaceYoffset);
+                                    cutFromSurfaceToStack();
                                     drawSurfaceMain(false);drawSurfaceBottom();
                                 break;
                                 case 3://Paste
-                                    pasteFromStackToSurface(subSurfaceXoffset, subSurfaceYoffset);
+                                    pasteFromStackToSurface();
                                     drawSurfaceMain(true);drawSurfaceBottom();
                                 break;
                             }
                             stylusPressed = true;
+                            goto frameEnd;
                         }
                         if(touch.py >= 64 && stylusPressed == false)//revisar botones inferiores
                         {
@@ -1323,6 +1336,7 @@ int main(void) {
 
                             }
                             stylusPressed = true;
+                            goto frameEnd;
                         }
                     }
                 }
@@ -1338,6 +1352,7 @@ int main(void) {
                             actions |= getActionsFromTouch(button);
                         }
                         stylusPressed = true;
+                        goto frameEnd;
                     }
                     
                     else if(touch.py >= 40 && touch.py < 64)//creador de colores
@@ -1356,6 +1371,7 @@ int main(void) {
                             //dibujar el contorno del color seleccionado
                             _col = AVinvertColor(_col);
                             AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                            goto frameEnd;
                         }
                         else{
                             int index = (touch.py-40)>>3;
@@ -1386,6 +1402,7 @@ int main(void) {
                             //dibujar el contorno del color seleccionado
                             _col = AVinvertColor(_col);
                             AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                            goto frameEnd;
                         }
                     }
                     else//seleccionar un color en la paleta
@@ -1398,23 +1415,31 @@ int main(void) {
                             updatePal(((row<<4)+col)-palettePos,&palettePos);   
                             stylusPressed = true;
                         }
+                        goto frameEnd;
                     }
                 }
             }
             else{
                 stylusPressed = false;
             }
+
+            frameEnd://finalizar el frame
+
             if(kUp & KEY_TOUCH && drew == true){
                 drew = false;
                 backupWrite();
             }
-            //código de final de frame
             if (actions != ACTION_NONE) {
                 applyActions(actions);
                 drawSurfaceBottom();
             }
-            if(showGrid && updated == true){drawGrid(AVinvertColor(palette[paletteOffset])); updated = false;}
-            submitVRAM();
+            swiWaitForVBlank();
+            if(updated){//llamar a submitVRAM solo si se modificó algo visual
+                submitVRAM(acurrate);
+            }
+            updated = false;
+            acurrate = false;
+            //fin del loop de modo bitmap
         }
         else//=======================================CONSOLA DE TEXTO=======================================>
         {
@@ -1434,17 +1459,15 @@ int main(void) {
                 {
                     int bpps[4]={2,4,8,2};
                     if(redraw){
-                    iprintf("Create new file:\n");
-                    iprintf("Resolution: %d",1<<resX);
-                    iprintf("x%d",1<<resY);
-                    iprintf("\nColors:%d",1<<selectorA);
+                        iprintf("Create new file:\n");
+                        iprintf("Resolution: %d",1<<resX);
+                        iprintf("x%d",1<<resY);
+                        iprintf("\nColors:%d",1<<selectorA);
 
-                    if(selector == 3){
-                        iprintf("\nNes mode");
+                        if(selector == 3){
+                            iprintf("\nNes mode");
+                        }
                     }
-
-                    }
-
 
                     if(kDown & KEY_RIGHT)
                     {
@@ -1463,6 +1486,7 @@ int main(void) {
                         surfaceXres = resX;
                         surfaceYres = resY;
                         paletteBpp = selectorA;
+                        subSurfaceZoom = 7-MAX(surfaceXres,surfaceYres);//limitar el zoom
                         //se inicia un nuevo lienzo
                         initBitmap();
                         bitmapMode();//simplemente salir de este menú
@@ -1503,7 +1527,9 @@ int main(void) {
                     {
                         if(kDown & KEY_START)//se guarda el archivo
                         {
-                            sprintf(path,"%s%s",text,format);
+                            strcat(path, text);
+                            strcat(path, format);
+
                             switch(selectorA)
                             {
                                 default:
@@ -1553,7 +1579,8 @@ int main(void) {
                         if(kDown & KEY_START)//se carga el archivo
                         {
                             //variables predeterminadas
-                            sprintf(path,"%s%s",text,format);
+                            strcat(path, text);
+                            strcat(path, format);
                             nesMode = false;
                             switch(selectorA)
                             {
@@ -1644,16 +1671,20 @@ int main(void) {
                         }
                     }
                     if(kDown & KEY_A) {
-                        if(selector < 0 || selector >= fileCount)
-                        {
+                        if(selector < 0 || selector >= fileCount) {
                             iprintf("Error");
-                        } // seguridad
-                        else{
+                        } else {
                             if(entryList[selector].d_type == DT_DIR) {
-                                // si es carpeta, entramos
                                 enterFolder(selector);
                             } else {
-                                kDown = KEY_START;
+                                // Guardar archivo completo directamente en path
+                                snprintf(path, sizeof(path), "%s%s", path, entryList[selector].d_name);
+
+                                // Limpiar text y format si ya no se usan
+                                text[0] = '\0';
+                                format[0] = '\0';
+
+                                kDown = KEY_START;//forzar a cargar el archivo
                                 goto textConsole;
                             }
                         }
@@ -1666,17 +1697,17 @@ int main(void) {
                         iprintf(texts[selectorA]);//extensión + información extra
                         //separar para mostrar el explorador
                         iprintf("\n-------------------------------\n");
-                        printf(path);
                         printf("\n");
                         listFiles();//dibujar información del explorador
                     }
                 }
         }
-        swiWaitForVBlank();
         oamUpdate(&oamSub);
-        //updateFPS();
-        //AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
-        //AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
+
+        //dejar solo para debug, en la DSi oficial da un error visual gigantesco :D
+        updateFPS();
+        AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
+        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
     }
     return 0;
 }
