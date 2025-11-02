@@ -465,9 +465,6 @@ int importPCX(const char* path, u16* surface) {
     return 0;
 }
 
-// ----------------------------------------------------
-// Exportar surface + palette -> PCX 8bpp indexada
-// ----------------------------------------------------
 int exportPCX(const char* path, u16* surface, int width, int height) {
     FILE* f = fopen(path, "wb");
     if(!f) return -1;
@@ -687,41 +684,56 @@ int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) 
     fread(&infoHeader, sizeof(infoHeader), 1, in);
 
     if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
-    if(infoHeader.biBitCount != 8) { fclose(in); return 0; } // solo 8bpp soportado
+    if(infoHeader.biBitCount != 8)  { fclose(in); return 0; } // solo 8bpp soportado
 
-    int width = infoHeader.biWidth;
+    int width  = infoHeader.biWidth;
     int height = infoHeader.biHeight;
     int numColors = infoHeader.biClrUsed ? infoHeader.biClrUsed : 256;
 
-    // Leer paleta (BGRA → ARGB1555)
-    for(int i=0; i<numColors; i++) {
+    // ===================== Calcular surfaceXres y surfaceYres =====================
+    // Redondear a la siguiente potencia de 2 (máximo 128)
+    int newW = 1, newH = 1;
+    int expW = 0, expH = 0;
+
+    while(newW < width && expW < 7) { newW <<= 1; expW++; }
+    while(newH < height && expH < 7) { newH <<= 1; expH++; }
+
+    surfaceXres = expW;  // guardar exponente (0=1px, 7=128px)
+    surfaceYres = expH;
+
+    int paddedW = 1 << surfaceXres;
+    int paddedH = 1 << surfaceYres;
+
+    // ===================== Leer paleta (BGRA → ARGB1555) =====================
+    for(int i = 0; i < numColors; i++) {
         uint8_t entry[4];
         fread(entry, 4, 1, in);
         uint8_t b = entry[0];
         uint8_t g = entry[1];
         uint8_t r = entry[2];
-        //uint8_t a = entry[3];   a nadie le importa el alpha :>
-        uint16_t c =
-            (r>>3) |
-            ((g>>3) << 5)  |
-            ((b>>3) << 10)  |
-            (0x8000);
-        palette[i] = c;
+        palette[i] = (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) | 0x8000;
     }
 
-    // Leer surface
+    // ===================== Leer pixeles =====================
     fseek(in, fileHeader.bfOffBits, SEEK_SET);
-    for(int y = height-1; y >= 0; y--) {
-        for(int x = 0; x < width; x++) {
-            uint8_t idx;
-            fread(&idx, 1, 1, in);
-            surface[y*width + x] = idx;
+
+    // Se rellenan los bordes sobrantes con índice 0
+    for(int y = 0; y < paddedH; y++) {
+        for(int x = 0; x < paddedW; x++) {
+            uint8_t idx = 0;
+            if(y < height && x < width) {
+                // Recordar que los BMP están invertidos verticalmente
+                fseek(in, fileHeader.bfOffBits + ((height - 1 - y) * width) + x, SEEK_SET);
+                fread(&idx, 1, 1, in);
+            }
+            surface[y * paddedW + x] = idx;
         }
     }
 
     fclose(in);
     return 1;
 }
+
 
 void saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     FILE* out = fopen(filename, "wb");
@@ -831,10 +843,10 @@ int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     fseek(in, fileHeader.bfOffBits, SEEK_SET);
     int bytesPerRow = ((width + 1) / 2 + 3) & ~3;
 
-    for (int y = height - 1; y >= 0; y--) {
+    for (int y = 0; y >= height; y--) {//eje vertical
         int surfaceY = height - 1 - y;
         fread(&backup[0], 1, bytesPerRow, in);
-        for (int x = 0; x < width; x += 2) {
+        for (int x = 0; x < width; x += 2) {//eje horizontal
             uint8_t byte = ((uint8_t*)backup)[x / 2];
             uint8_t p1 = (byte >> 4) & 0x0F;
             uint8_t p2 = byte & 0x0F;

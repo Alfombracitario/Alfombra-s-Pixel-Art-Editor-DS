@@ -5,11 +5,10 @@
 
 /*
     To-Do list:
-    No redibujar todo al pintar
     Poder cambiar el tamaño o tipo de pincel
-    mejorar el sistema de guardado/cargado
+    mejorar el sistema de guardado/cargado (casi terminado)
     arreglar el grid
-
+    páginas 
 */
 #include <nds.h>
 #include <stdio.h>
@@ -22,6 +21,7 @@
 
 #include "avdslib.h"
 #include "formats.h"
+#include "intro.h"//archivo que pienso usar para todos mis juegos de DS
 #include "GFXinput.h"
 #include "GFXconsoleInput.h"
 #include "GFXselector24.h"
@@ -29,7 +29,6 @@
 #include "GFXnewImageInput.h"
 
 //Macros
-
 #define SCREEN_W 256
 #define SCREEN_H 256
 #define SURFACE_X 64
@@ -137,6 +136,8 @@ bool drew = false;
 bool updated = false;
 bool acurrate = false;
 bool mayus = false;
+int holdTimer = 0;
+int lastKey = 0;
 int gridSkips = 0;
 
 enum {
@@ -576,7 +577,7 @@ void clearTopBitmap()
             if(b < 16) {b++;}   
         }
         _col = AVARGB(r,0,b);
-        AVfillDMA(pixelsTopVRAM,j<<8,(((j+1)<<8)-1),_col);
+        AVfillDMA(pixelsTopVRAM,j<<8,(((j+1)<<8)-1),_col);//dibuja directamente en la VRAM
     }
 }
 
@@ -666,7 +667,7 @@ inline void bitmapMode()
     vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
     bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
 
-    clearTopBitmap();
+    clearTopBitmap();//redibujar el fondo
     setEditorSprites();
     submitVRAM(true,true);//recuperamos nuestros queridos datos
 }
@@ -1126,7 +1127,11 @@ int main(void) {
     }
 
     defaultExceptionHandler();// Mostrar crasheos
+
+    //antes de iniciar el programa, mostramos la intro
+    intro();
     initBitmap();
+
     //iniciamos el sprite para dibujar : )
     oamInit(&oamMain, SpriteMapping_Bmp_1D_128, false);
     oamInit(&oamSub, SpriteMapping_Bmp_1D_128, false);
@@ -1458,15 +1463,14 @@ int main(void) {
                 if(currentConsoleMode == MODE_NEWIMAGE)
                 {
                     int bpps[4]={2,4,8,2};
-                    if(redraw){
-                        iprintf("Create new file:\n");
-                        iprintf("Resolution: %d",1<<resX);
-                        iprintf("x%d",1<<resY);
-                        iprintf("\nColors:%d",1<<selectorA);
+                    consoleClear();
+                    iprintf("Create new file:\n");
+                    iprintf("Resolution: %d",1<<resX);
+                    iprintf("x%d",1<<resY);
+                    iprintf("\nColors:%d",1<<selectorA);
 
-                        if(selector == 3){
-                            iprintf("\nNes mode");
-                        }
+                    if(selector == 3){
+                        iprintf("\nNes mode");
                     }
 
                     if(kDown & KEY_RIGHT)
@@ -1527,8 +1531,11 @@ int main(void) {
                     {
                         if(kDown & KEY_START)//se guarda el archivo
                         {
-                            strcat(path, text);
-                            strcat(path, format);
+                            char tempPath[256] = {0};
+
+                            sprintf(tempPath, "%s", path);
+                            strcat(tempPath, text);
+                            strcat(tempPath, format);
 
                             switch(selectorA)
                             {
@@ -1536,40 +1543,40 @@ int main(void) {
                                     iprintf("\nNot supported!");
                                 break;
                                 case 0://bmp direct
-                                    saveBMP(path,palette,surface);//Gracias Zhennyak!
+                                    saveBMP(tempPath,palette,surface);//Gracias Zhennyak!
                                 break;
 
                                 case 1://bmp indexed
-                                    saveBMP_indexed(path,palette,surface);
+                                    saveBMP_indexed(tempPath,palette,surface);
                                 break;
 
                                 case 2://bmp 4bpp
-                                    saveBMP_4bpp(path,palette,surface);
+                                    saveBMP_4bpp(tempPath,palette,surface);
                                 break;
 
                                 case 3://NES
-                                    exportNES(path,surface,1<<surfaceYres);
+                                    exportNES(tempPath,surface,1<<surfaceYres);
                                 break;
                                 case 4://GameBoy
-                                    exportGBC(path,surface,1<<surfaceYres);
+                                    exportGBC(tempPath,surface,1<<surfaceYres);
                                 break;
                                 case 5://SNES                                                         
-                                    exportSNES(path,surface,1<<surfaceYres);
+                                    exportSNES(tempPath,surface,1<<surfaceYres);
                                 break;
                                 case 6://GBA
-                                    exportGBA(path,surface,1<<surfaceYres);
+                                    exportGBA(tempPath,surface,1<<surfaceYres);
                                 break;
                                 case 7://PCX                                                                             
-                                    exportPCX(path,surface,1<<surfaceXres,1<<surfaceYres);
+                                    exportPCX(tempPath,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                                 case 8: //Pal
-                                    exportPal(path);
+                                    exportPal(tempPath);
                                 break;
                                 case 9://Gif
-                                    exportGIF(path,surface,1<<surfaceXres,1<<surfaceYres);
+                                    exportGIF(tempPath,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                                 case 10://Tga
-                                    exportTGA(path,surface,1<<surfaceXres,1<<surfaceYres);
+                                    exportTGA(tempPath,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                             }
                             bitmapMode();
@@ -1579,8 +1586,12 @@ int main(void) {
                         if(kDown & KEY_START)//se carga el archivo
                         {
                             //variables predeterminadas
-                            strcat(path, text);
-                            strcat(path, format);
+                            char tempPath[256] = {0};
+
+                            sprintf(tempPath, "%s", path);
+                            strcat(tempPath, text);
+                            strcat(tempPath, format);
+
                             nesMode = false;
                             switch(selectorA)
                             {
@@ -1588,41 +1599,41 @@ int main(void) {
                                     iprintf("\nNot supported!");
                                 break;
                                 case 1://bmp 8bpp
-                                    loadBMP_indexed(path,palette,surface);
+                                    loadBMP_indexed(tempPath,palette,surface);
                                     paletteBpp = 8;
                                 break;
                                 case 2://bmp 4bpp
-                                    loadBMP_4bpp(path,palette,surface);
+                                    loadBMP_4bpp(tempPath,palette,surface);
                                     paletteBpp = 4;
                                 break;
                                 case 3://NES
-                                    importNES(path,surface);
+                                    importNES(tempPath,surface);
                                     paletteBpp = 2;nesMode = true;
                                     drawNesPalette();
                                 break;
                                 case 4://GBC
-                                    importGBC(path,surface);
+                                    importGBC(tempPath,surface);
                                     paletteBpp = 2;
                                 break;
                                 case 5://SNES
-                                    importSNES(path,surface);
+                                    importSNES(tempPath,surface);
                                     paletteBpp = 4;
                                 break;
                                 case 6://GBA
-                                    importGBA(path,surface);
+                                    importGBA(tempPath,surface);
                                     paletteBpp = 4;
                                 break;
                                 case 7://PCX
-                                    importPCX(path,surface);
+                                    importPCX(tempPath,surface);
                                 break;
                                 case 8://PAL
-                                    importPal(path);
+                                    importPal(tempPath);
                                 break;
                                 case 9://GIF
-                                    importGIF(path,surface);
+                                    importGIF(tempPath,surface);
                                 break;
                                 case 10://TGA
-                                    importTGA(path,surface);
+                                    importTGA(tempPath,surface);
                                 break;
                             }
                             bitmapMode();
@@ -1631,11 +1642,12 @@ int main(void) {
                             setBackupVariables();
                         }
                     }
-                    //general
                     if(kDown & KEY_RIGHT && selectorA < 10){selectorA++;}
                     if(kDown & KEY_LEFT && selectorA > 0){selectorA--;}
                     if(kDown & KEY_UP && selector > 0){selector--;}
                     if(kDown & KEY_DOWN){selector++;}
+
+
                     char texts[11][32] = {
                         ".bmp [direct]",
                         ".bmp [8bpp]",
@@ -1677,14 +1689,16 @@ int main(void) {
                             if(entryList[selector].d_type == DT_DIR) {
                                 enterFolder(selector);
                             } else {
-                                // Guardar archivo completo directamente en path
-                                snprintf(path, sizeof(path), "%s%s", path, entryList[selector].d_name);
+                                char newPath[256];
+                                snprintf(newPath, sizeof(newPath), "%s%s", path, entryList[selector].d_name);
+                                if (path[strlen(path) - 1] != '/') strcat(path, "/");
 
-                                // Limpiar text y format si ya no se usan
+                                snprintf(newPath, sizeof(newPath), "%s%s", path, entryList[selector].d_name);
+                                strncpy(path, newPath, sizeof(path));
+
                                 text[0] = '\0';
                                 format[0] = '\0';
-
-                                kDown = KEY_START;//forzar a cargar el archivo
+                                kDown = KEY_START;
                                 goto textConsole;
                             }
                         }
@@ -1705,9 +1719,9 @@ int main(void) {
         oamUpdate(&oamSub);
 
         //dejar solo para debug, en la DSi oficial da un error visual gigantesco :D
-        updateFPS();
+        /*updateFPS();
         AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
-        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
+        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);*/
     }
     return 0;
 }

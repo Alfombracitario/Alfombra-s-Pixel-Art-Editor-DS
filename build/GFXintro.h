@@ -1,25 +1,25 @@
 
-//{{BLOCK(GFXinput)
+//{{BLOCK(GFXintro)
 
 //======================================================================
 //
-//	GFXinput, 256x192@16, 
+//	GFXintro, 256x192@16, 
 //	Alphabit on.
 //	+ bitmap lz77 compressed
-//	Total size: 14132 = 14132
+//	Total size: 12596 = 12596
 //
-//	Time-stamp: 2025-11-02, 11:29:08
+//	Time-stamp: 2025-11-02, 15:18:42
 //	Exported by Cearn's GBA Image Transmogrifier, v0.9.2
 //	( http://www.coranac.com/projects/#grit )
 //
 //======================================================================
 
-#ifndef GRIT_GFXINPUT_H
-#define GRIT_GFXINPUT_H
+#ifndef GRIT_GFXINTRO_H
+#define GRIT_GFXINTRO_H
 
-#define GFXinputBitmapLen 14132
-extern const unsigned int GFXinputBitmap[3533];
+#define GFXintroBitmapLen 12596
+extern const unsigned int GFXintroBitmap[3149];
 
-#endif // GRIT_GFXINPUT_H
+#endif // GRIT_GFXINTRO_H
 
-//}}BLOCK(GFXinput)
+//}}BLOCK(GFXintro)
