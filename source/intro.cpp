@@ -3,6 +3,9 @@
 #include <math.h>
 #include <time.h>//para el rng
 #include "GFXintro.h"
+#include <maxmod9.h>
+#include "soundbank_bin.h"		// soundbank binary reference
+#include "soundbank.h"			// generated soundbank definitions
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -35,6 +38,10 @@ void topBackground() {
 }
 
 void intro(){
+    //sonido
+	mmInitDefaultMem( (mm_addr)soundbank_bin );
+    mmLoad( MOD_INTRO );
+	mmStart( MOD_INTRO, MM_PLAY_ONCE);
     //modos gráficos
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);

@@ -6,9 +6,8 @@
 /*
     To-Do list:
     Poder cambiar el tamaño o tipo de pincel
-    mejorar el sistema de guardado/cargado (casi terminado)
-    arreglar el grid
     páginas 
+    terminar modo 16bpp
 */
 #include <nds.h>
 #include <stdio.h>
@@ -27,6 +26,7 @@
 #include "GFXselector24.h"
 #include "GFXselector16.h"
 #include "GFXnewImageInput.h"
+#include "GFXbackground.h"
 
 //Macros
 #define SCREEN_W 256
@@ -61,6 +61,7 @@ u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
 u16 *gfx32;
 u16 *gfx16;
+u16 *gfxBG;
 u16 pixelsTop[49152];//copia en RAM (es más rápida)
 u16 pixels[49152];
 u16 palette[256];
@@ -107,6 +108,8 @@ int mainSurfaceYoffset = 0;
 int subSurfaceXoffset = 0;
 int subSurfaceYoffset = 0;
 int subSurfaceZoom = 3;// 8 veces más cerca
+int sleepTimer = 60;//frames para que se duerma (baje FPS)
+int sleepingFrames = 1;//solo espera un frame
 
 
 //Solo acepto potencias de 2   >:3
@@ -135,6 +138,7 @@ bool showGrid = false;
 bool drew = false;
 bool updated = false;
 bool acurrate = false;
+bool both = true;//actualizar ambas pantallas
 bool mayus = false;
 int holdTimer = 0;
 int lastKey = 0;
@@ -305,10 +309,10 @@ if ( key < 0 ) return;
 //función para pasar copiar datos rápidamente
 extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes);
 
-void submitVRAM(bool full = false, bool _acurrate = false)
+void submitVRAM(bool full = false, bool _acurrate = false, bool both = true)
 {
     // ====== Cálculo de offsets y tamaños ======
-    const int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset;//offset de la pantalla superior
+    const int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset; // offset de la pantalla superior
     const int sizeTop = 512 << surfaceYres;   // Tamaño top
     int sizeBottom = full ? 98304 : 65536;
 
@@ -318,8 +322,8 @@ void submitVRAM(bool full = false, bool _acurrate = false)
     u16* dstBottom = pixelsVRAM;
 
     // ====== Flush de caché antes de transferir ======
-    if(_acurrate == true){
-        DC_FlushRange(srcTop, sizeTop);
+    if (_acurrate) {
+        if (both) DC_FlushRange(srcTop, sizeTop);
         DC_FlushRange(srcBottom, sizeBottom);
     }
 
@@ -327,25 +331,33 @@ void submitVRAM(bool full = false, bool _acurrate = false)
     DMA0_CR = 0;
     DMA1_CR = 0;
 
-    // ====== Iniciar DMA0 -> pantalla superior ======
-    DMA0_SRC  = (u32)srcTop;
-    DMA0_DEST = (u32)dstTop;
-    DMA0_CR   = (sizeTop >> 1) | DMA_ENABLE;  // Halfwords
+    // ====== Iniciar DMA ======
+    if (both) {
+        // Top screen
+        DMA0_SRC  = (u32)srcTop;
+        DMA0_DEST = (u32)dstTop;
+        DMA0_CR   = (sizeTop >> 1) | DMA_ENABLE; // Halfwords
+    }
 
-    // ====== Iniciar DMA1 -> pantalla inferior ======
+    // Bottom screen
     DMA1_SRC  = (u32)srcBottom;
     DMA1_DEST = (u32)dstBottom;
-    DMA1_CR   = (sizeBottom >> 1) | DMA_ENABLE;  // Halfwords
+    DMA1_CR   = (sizeBottom >> 1) | DMA_ENABLE; // Halfwords
 
-    // ====== Esperar a que ambos terminen ======
-    while (DMA0_CR & DMA_ENABLE || DMA1_CR & DMA_ENABLE);
+    // ====== Esperar a que terminen ======
+    if (both) {
+        while ((DMA0_CR & DMA_ENABLE) || (DMA1_CR & DMA_ENABLE));
+    } else {
+        while (DMA1_CR & DMA_ENABLE);
+    }
 
     // ====== Flush final si VRAM se usará en GPU inmediatamente ======
-    if(_acurrate == true){
-        DC_FlushRange(dstTop, sizeTop);
+    if (_acurrate) {
+        if (both) DC_FlushRange(dstTop, sizeTop);
         DC_FlushRange(dstBottom, sizeBottom);
     }
 }
+
 
 inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
     int dx = abs(x1 - x0);
@@ -380,12 +392,23 @@ inline void drawGrid(u16 color){
 //por algún motivo inline bajaba el rendimiento
 void drawSurfaceMain(bool full = true)
 {
+    both = true;//debe actualizar ambas pantallas
     int xres = 1<<surfaceXres;   // ancho
     int yres = 1<<surfaceYres;   // alto
-    //if(full){
-    //    int from = subSurfaceXoffset+(subSurfaceYoffset<<surfaceXres);
-    //}
-    if(paletteOffset == 0)
+
+    if(paletteBpp == 16){//color directo
+        for(int i = 0; i < yres; i++) // eje Y
+        {
+            int _y = i <<surfaceXres; // fila en surface
+            int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
+
+            for(int j = 0; j < xres; j++) // eje X
+            {
+                pixelsTop[y+j] = surface[_y+j];
+            }
+        }
+    }
+    else if(paletteOffset == 0)
     {
         for(int i = 0; i < yres; i++) // eje Y
         {
@@ -466,7 +489,10 @@ void drawSurfaceBottom(){
             }
             break;
     }
-    if(showGrid){drawGrid(AVinvertColor(palette[paletteOffset]));}
+    if(showGrid){drawGrid(AVinvertColor(palette[paletteOffset]));
+        acurrate = true;
+    }
+    
 }
 
 void drawColorPalette()
@@ -626,6 +652,16 @@ void initBitmap()
 }
 
 void setEditorSprites(){
+    //iniciamos el sprite para dibujar : )
+    oamInit(&oamMain, SpriteMapping_Bmp_1D_128, false);
+    oamInit(&oamSub, SpriteMapping_Bmp_1D_128, false);
+
+    oamClear(&oamMain, 0, 128);
+    oamClear(&oamSub, 0, 128);
+
+    u16 *gfx32 = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector24Bitmap, gfx32, 32*32*2);
+
             oamSet(&oamSub, 0,
             0, 16,
             0,
@@ -635,8 +671,26 @@ void setEditorSprites(){
             -1,
             false, false, false, false, false);
         //oamSet(&oamSub,1,0,0,0,15,SpriteSize_16x16, SpriteColorFormat_Bmp,gfx16,-1,false, false, false, false, false);
-    }
+}
+void setOamBG(){
+u16 *gfxBG = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
+dmaCopy(GFXbackgroundBitmap, gfxBG, 32*32*2);
 
+for(int i = 0; i < 16; i++){
+    int x = ((i & 0b11)<<5)+SURFACE_X;
+    int y = (i & 0b1100)<<3;
+
+    oamSet(&oamSub, i+4,//index
+    x, y,//posición
+        1,
+        15, // opaco
+        SpriteSize_32x32, SpriteColorFormat_Bmp,
+        gfxBG,
+        -1,
+    false, false, false, false, false);
+}
+
+}
 //====================================================================Compatibilidad con modos gráficos====================================|
 inline void textMode()
 {
@@ -647,9 +701,10 @@ inline void textMode()
     videoSetMode(MODE_0_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
-
+    iprintf("Press any key\nor touch the screen \nto update the text console.");
     oamClear(&oamSub, 0, 128);
-    
+    sleepingFrames = 1;
+    sleepTimer = 60;
 }
 
 inline void bitmapMode()
@@ -657,6 +712,7 @@ inline void bitmapMode()
     if(currentSubMode == SUB_BITMAP) return; // ya estamos en bitmap
     currentSubMode = SUB_BITMAP;
 
+    //reiniciamos VRAM
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
     vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
@@ -669,7 +725,10 @@ inline void bitmapMode()
 
     clearTopBitmap();//redibujar el fondo
     setEditorSprites();
-    submitVRAM(true,true);//recuperamos nuestros queridos datos
+    submitVRAM(true,true,true);//recuperamos nuestros queridos datos
+    if(paletteBpp == 16){
+        setOamBG();
+    }
 }
 //============================================================= SD CARD ===============================================|
 bool saveArray(const char *path, void *array, size_t size) {
@@ -817,33 +876,54 @@ void handleKey(char key) {
             break;
     }
 }
-void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {// NECESITA SER ARREGLADO (overflow)
+void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {
     if (oldColor == newColor) return;
+
+    int width  = 1 << xres;
+    int height = 1 << yres;
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
     if (surface[(y << xres) + x] != oldColor) return;
 
+    // reinterpretar el stack global como bytes para doble capacidad
+    u8 *stack8 = (u8*)stack;
+    int maxStack = (sizeof(stack) * 2);
     int sp = 0;
 
-    stack[sp++] = x;
-    stack[sp++] = y;
+    stack8[sp++] = (u8)x;
+    stack8[sp++] = (u8)y;
 
     while (sp > 0) {
-        int cy = stack[--sp];
-        int cx = stack[--sp];
+        if (sp < 2) break; // seguridad mínima
+        u8 cy = stack8[--sp];
+        u8 cx = stack8[--sp];
 
-        if (cx < 0 || cy < 0 || cx >= (1 << xres) || cy >= (1 << yres)) continue;
-        if (surface[(cy << xres) + cx] != oldColor) continue;
+        int idx = (cy << xres) + cx;
+        if (surface[idx] != oldColor) continue;
+        surface[idx] = newColor;
 
-        surface[(cy << xres) + cx] = newColor;
-
-        stack[sp++] = cx+1; stack[sp++] = cy;
-        stack[sp++] = cx-1; stack[sp++] = cy;
-        stack[sp++] = cx;   stack[sp++] = cy+1;
-        stack[sp++] = cx;   stack[sp++] = cy-1;
+        // push vecinos con control de overflow
+        if (sp <= maxStack - 8) {
+            if (cx + 1 < width  && surface[(cy << xres) + (cx + 1)] == oldColor) { stack8[sp++] = cx + 1; stack8[sp++] = cy; }
+            if (cx > 0          && surface[(cy << xres) + (cx - 1)] == oldColor) { stack8[sp++] = cx - 1; stack8[sp++] = cy; }
+            if (cy + 1 < height && surface[((cy + 1) << xres) + cx] == oldColor) { stack8[sp++] = cx;     stack8[sp++] = cy + 1; }
+            if (cy > 0          && surface[((cy - 1) << xres) + cx] == oldColor) { stack8[sp++] = cx;     stack8[sp++] = cy - 1; }
+        } else {
+            break; // stack lleno → evita overflow
+        }
     }
 }
 
+
 void applyTool(int x, int y, bool dragging) {
-    u16 color = palettePos - paletteOffset;//lo limitamos al rango de bpp
+    u16 color = 0;
+    if(paletteBpp != 16){
+        color = palettePos - paletteOffset;
+    }
+    else
+    {//si estamos en modo 16 bits
+        color = palette[palettePos];
+        color = color |0x8000; //forzar alpha
+    }
     switch (currentTool) {
         case TOOL_BRUSH:
             if (dragging) {
@@ -861,9 +941,14 @@ void applyTool(int x, int y, bool dragging) {
             }
             break;
 
-        case TOOL_PICKER: 
-            updatePal(surface[(y << surfaceXres) + x]-color,&palettePos);
-            currentTool = TOOL_BRUSH;
+        case TOOL_PICKER:
+            if(paletteBpp == 16){
+                updatePal(surface[(y << surfaceXres) + x],&palettePos);
+            }
+            else{
+                updatePal(surface[(y << surfaceXres) + x]-color,&palettePos);
+            }
+            currentTool = TOOL_BRUSH;//volver a seleccionar el pincel
             oamSetXY(&oamSub,0,0,16);
             break;
 
@@ -909,7 +994,7 @@ void cutFromSurfaceToStack(){
     AVdrawRectangleDMA(surface,subSurfaceXoffset,blockSize,subSurfaceYoffset,blockSize,0,surfaceXres);
 }
 
-void pasteFromStackToSurface(int xoffset = 0, int yoffset = 0)
+void pasteFromStackToSurface()
 {
     int ysize = 1 << stackYres;
     int xsize = 1 << stackXres;
@@ -917,7 +1002,7 @@ void pasteFromStackToSurface(int xoffset = 0, int yoffset = 0)
     for(int i = 0; i < ysize; i++) // eje vertical
     {
         int y = (i << stackXres); // fila en el stack
-        int _y = ((i + yoffset) << surfaceXres) + xoffset; // fila en surface con offset
+        int _y = ((i + subSurfaceYoffset) << surfaceXres) + subSurfaceXoffset; // fila en surface con offset
 
         for(int j = 0; j < xsize; j++)
         {
@@ -1132,18 +1217,10 @@ int main(void) {
     intro();
     initBitmap();
 
-    //iniciamos el sprite para dibujar : )
-    oamInit(&oamMain, SpriteMapping_Bmp_1D_128, false);
-    oamInit(&oamSub, SpriteMapping_Bmp_1D_128, false);
+    //u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
+    //dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
 
-    oamClear(&oamMain, 0, 128);
-    oamClear(&oamSub, 0, 128);
 
-    u16 *gfx32 = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
-    dmaCopy(GFXselector24Bitmap, gfx32, 32*32*2);
-
-    u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
-    dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
 
     setEditorSprites();
 
@@ -1151,17 +1228,15 @@ int main(void) {
 
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
     while(pmMainLoop()) {
+        //inicio del loop (global)
+        //input
         scanKeys();
         kDown = keysDown();
         kHeld = keysHeld();
         kUp = keysUp();
-
         touchRead(&touch);
-
-        //reiniciar algunos inputs
         int actions = ACTION_NONE;
 
-        // keys
         if(currentSubMode == SUB_BITMAP)
         {
             if(kHeld & KEY_L || kHeld & KEY_X)//zoom y offsets
@@ -1241,28 +1316,27 @@ int main(void) {
                     {
                         if(touch.py < 16 && stylusPressed == false){//iconos de la parte superior
                             int selected = touch.px>>4;
+                            text[0] = '\0';//quitar nombre reciente :>
+                            //actualizar input para que la pantalla también lo haga
+                            kDown = kDown | KEY_TOUCH;
                             switch(selected)
                             {
                                 case 0: //load file
                                     textMode();
                                     currentConsoleMode = LOAD_file;
                                     decompress(GFXconsoleInputBitmap, BG_GFX_SUB, LZ77Vram);
-                                    goto textConsole;
-                                break;
-
+                                goto textConsole;
                                 case 1: //New file
                                     textMode();
                                     currentConsoleMode = MODE_NEWIMAGE;
                                     decompress(GFXnewImageInputBitmap, BG_GFX_SUB, LZ77Vram);
-                                    goto textConsole;
-                                break;
+                                goto textConsole;
 
                                 case 2:// Save file
                                     textMode();
                                     currentConsoleMode = SAVE_file;
                                     decompress(GFXconsoleInputBitmap, BG_GFX_SUB, LZ77Vram);
-                                    goto textConsole;
-                                break;
+                                goto textConsole;
 
                                 //PLACEHOLDER el caso 3 está libre por ahora :> (pienso usarlo para configuración en un futuro)
                             }
@@ -1428,7 +1502,7 @@ int main(void) {
                 stylusPressed = false;
             }
 
-            frameEnd://finalizar el frame
+            frameEnd://finalizar el frame del modo bitmap
 
             if(kUp & KEY_TOUCH && drew == true){
                 drew = false;
@@ -1438,18 +1512,28 @@ int main(void) {
                 applyActions(actions);
                 drawSurfaceBottom();
             }
-            swiWaitForVBlank();
-            if(updated){//llamar a submitVRAM solo si se modificó algo visual
-                submitVRAM(acurrate);
+            //implementación del modo reposo para ahorrar energía
+            for(int i = 0; i<sleepingFrames; i++){
+                swiWaitForVBlank();
             }
+            if(sleepTimer < 0 && sleepingFrames < 4){
+                sleepingFrames++;
+                sleepTimer = (60*(sleepingFrames<<2));//cada vez le toma más frames dormirse
+            }
+            if(updated){//llamar a submitVRAM solo si se modificó algo visual
+                submitVRAM(true,acurrate,both);
+                sleepTimer = 60;
+                sleepingFrames = 1;
+            }
+            sleepTimer--;
             updated = false;
             acurrate = false;
+            both = false;
             //fin del loop de modo bitmap
         }
         else//=======================================CONSOLA DE TEXTO=======================================>
         {
             textConsole:
-                swiWaitForVBlank();
                 bool redraw = false;
                 if(kDown){redraw = true;}
                 if(redraw){
@@ -1462,7 +1546,7 @@ int main(void) {
                 }
                 if(currentConsoleMode == MODE_NEWIMAGE)
                 {
-                    int bpps[4]={2,4,8,2};
+                    int bpps[5]={2,4,8,2,16};
                     consoleClear();
                     iprintf("Create new file:\n");
                     iprintf("Resolution: %d",1<<resX);
@@ -1485,7 +1569,7 @@ int main(void) {
                         if(selector < 0){selector = 3;}
                         selectorA = bpps[selector];
                     }
-                    if(kDown & KEY_START)
+                    if(kDown & KEY_START || kDown & KEY_A)
                     {
                         surfaceXres = resX;
                         surfaceYres = resY;
@@ -1509,7 +1593,7 @@ int main(void) {
 
                             case 0://Colores
                                 selector = ((x-32)/48);
-                                selector = selector % 4;
+                                selector = selector % 5;
                                 selectorA = bpps[selector];
                             break;
 
@@ -1524,9 +1608,8 @@ int main(void) {
                         
                     }
                 }
-                if(currentConsoleMode == SAVE_file || currentConsoleMode == LOAD_file)
+                else if(currentConsoleMode == SAVE_file || currentConsoleMode == LOAD_file)
                 {   
-                    
                     if(currentConsoleMode == SAVE_file)
                     {
                         if(kDown & KEY_START)//se guarda el archivo
@@ -1597,6 +1680,10 @@ int main(void) {
                             {
                                 default:
                                     iprintf("\nNot supported!");
+                                break;
+                                case 0://bmp directo
+                                    loadBMP_direct(tempPath,surface);
+                                    paletteBpp = 16;
                                 break;
                                 case 1://bmp 8bpp
                                     loadBMP_indexed(tempPath,palette,surface);
@@ -1689,16 +1776,11 @@ int main(void) {
                             if(entryList[selector].d_type == DT_DIR) {
                                 enterFolder(selector);
                             } else {
-                                char newPath[256];
-                                snprintf(newPath, sizeof(newPath), "%s%s", path, entryList[selector].d_name);
-                                if (path[strlen(path) - 1] != '/') strcat(path, "/");
-
-                                snprintf(newPath, sizeof(newPath), "%s%s", path, entryList[selector].d_name);
-                                strncpy(path, newPath, sizeof(path));
-
-                                text[0] = '\0';
+                                // Si es archivo, guarda el nombre sin modificar el path
+                                strncpy(text, entryList[selector].d_name, sizeof(text));
+                                // No concatenes al path, solo usa path como carpeta actual
                                 format[0] = '\0';
-                                kDown = KEY_START;
+                                kDown = KEY_START; // simula "abrir"
                                 goto textConsole;
                             }
                         }
@@ -1711,17 +1793,19 @@ int main(void) {
                         iprintf(texts[selectorA]);//extensión + información extra
                         //separar para mostrar el explorador
                         iprintf("\n-------------------------------\n");
-                        printf("\n");
                         listFiles();//dibujar información del explorador
                     }
                 }
+        //final del textConsole
+        swiWaitForVBlank();
         }
         oamUpdate(&oamSub);
 
         //dejar solo para debug, en la DSi oficial da un error visual gigantesco :D
-        /*updateFPS();
+        updateFPS();
         AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
-        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);*/
+        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
+        
     }
     return 0;
 }

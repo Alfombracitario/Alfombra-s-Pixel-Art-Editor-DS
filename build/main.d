@@ -120,7 +120,8 @@ main.o: \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXconsoleInput.h \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h \
  C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector16.h \
- C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXnewImageInput.h
+ C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXnewImageInput.h \
+ C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXbackground.h
 C:/devkitPro/libnds/include/nds.h:
 C:/devkitPro/calico/include/calico.h:
 C:/devkitPro/calico/include/calico/types.h:
@@ -244,3 +245,4 @@ C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector24.h:
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXselector16.h:
 C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXnewImageInput.h:
+C:/Users/extra/OneDrive/Escritorio/projects/NDSi/Alfombra-s-Pixel-Art-Editor-DS/build/GFXbackground.h:

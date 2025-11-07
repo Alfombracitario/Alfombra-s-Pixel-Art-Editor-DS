@@ -592,6 +592,7 @@ void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
 
     fclose(out);
 }
+
 #pragma pack(push, 1) // asegurar alineación exacta
 typedef struct {
     uint16_t bfType;
@@ -615,6 +616,83 @@ typedef struct {
     uint32_t biClrImportant;
 } BITMAPINFOHEADER;
 #pragma pack(pop)
+
+int loadBMP_direct(const char* filename, uint16_t* surface) {
+    FILE* in = fopen(filename, "rb");
+    if(!in) return 0;
+
+    BITMAPFILEHEADER fileHeader;
+    BITMAPINFOHEADER infoHeader;
+
+    fread(&fileHeader, sizeof(fileHeader), 1, in);
+    fread(&infoHeader, sizeof(infoHeader), 1, in);
+
+    // Verificar firma y tipo de BMP soportado
+    if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
+    if(infoHeader.biBitCount != 16 && infoHeader.biBitCount != 24) { fclose(in); return 0; }
+
+    int width  = infoHeader.biWidth;
+    int height = infoHeader.biHeight;
+    int bpp    = infoHeader.biBitCount;
+
+    // ===================== Calcular surfaceXres y surfaceYres =====================
+    int newW = 1, newH = 1;
+    int expW = 0, expH = 0;
+
+    while(newW < width && expW < 7) { newW <<= 1; expW++; }
+    while(newH < height && expH < 7) { newH <<= 1; expH++; }
+
+    surfaceXres = expW;
+    surfaceYres = expH;
+
+    int paddedW = 1 << surfaceXres;
+    int paddedH = 1 << surfaceYres;
+
+    // ===================== Leer pixeles =====================
+    fseek(in, fileHeader.bfOffBits, SEEK_SET);
+
+    // Cada línea BMP está alineada a múltiplos de 4 bytes
+    int bytesPerPixel = bpp / 8;
+    int rowSize = ((width * bytesPerPixel + 3) & ~3);
+
+    for(int y = 0; y < paddedH; y++) {
+        for(int x = 0; x < paddedW; x++) {
+            uint16_t color = 0;
+
+            if(y < height && x < width) {
+                long pos = fileHeader.bfOffBits + (height - 1 - y) * rowSize + x * bytesPerPixel;
+                fseek(in, pos, SEEK_SET);
+
+                if(bpp == 16) {
+                    // BMP de 16 bits suele usar formato 565 o 555
+                    uint16_t raw;
+                    fread(&raw, 2, 1, in);
+
+                    // Intentar detectar 565 y convertir a 1555
+                    uint8_t r = (raw >> 11) & 0x1F;
+                    uint8_t g = (raw >> 5) & 0x3F;
+                    uint8_t b = raw & 0x1F;
+                    // Convertir 565 → 555
+                    g >>= 1;
+                    color = (b << 10) | (g << 5) | r | 0x8000;
+                } 
+                else if(bpp == 24) {
+                    uint8_t bgr[3];
+                    fread(bgr, 3, 1, in);
+                    uint8_t b = bgr[0] >> 3;
+                    uint8_t g = bgr[1] >> 3;
+                    uint8_t r = bgr[2] >> 3;
+                    color = (b << 10) | (g << 5) | r | 0x8000;
+                }
+            }
+            surface[y * paddedW + x] = color;
+        }
+    }
+
+    fclose(in);
+    return 1;
+}
+
 void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
     FILE* out = fopen(filename, "wb");
     if(!out) return;
@@ -673,6 +751,7 @@ void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface)
 
     fclose(out);
 }
+
 int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) {
     FILE* in = fopen(filename, "rb");
     if(!in) return 0;

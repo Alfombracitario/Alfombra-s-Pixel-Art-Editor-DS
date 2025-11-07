@@ -43,6 +43,8 @@ void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface);
 
 void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface);
 
+int loadBMP_direct(const char* filename, uint16_t* surface);
+
 int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface);
 
 int saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface);
