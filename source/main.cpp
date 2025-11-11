@@ -68,12 +68,15 @@ u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
+u8 pages[262144];//usa u8 para ahorrar memoria, eso significa que no existen pages en 16bpp
 //ideal añadir un array para guardar más frames
 
 touchPosition touch;
 
 int backupMax = 8;
 int backupSize = 16384;
+int currentPage = 0;
+int totalPages = 0;
 
 int backupIndex = -1;       // índice del último frame guardado
 int oldestBackup = 0;       // límite inferior (el frame más antiguo que aún es válido)
@@ -143,6 +146,7 @@ bool mayus = false;
 int holdTimer = 0;
 int lastKey = 0;
 int gridSkips = 0;
+bool rPressed = false;
 
 enum {
     ACTION_NONE      = 0,
@@ -1178,6 +1182,7 @@ void updateFPS() {
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
     initFPS();
+    pages[262143] = 0;
     // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
     videoSetMode(MODE_0_2D);                // modo texto
 
@@ -1800,12 +1805,6 @@ int main(void) {
         swiWaitForVBlank();
         }
         oamUpdate(&oamSub);
-
-        //dejar solo para debug, en la DSi oficial da un error visual gigantesco :D
-        updateFPS();
-        AVfillDMA(pixelsTopVRAM,0,60,C_BLACK);
-        AVfillDMA(pixelsTopVRAM,0,fps,C_GREEN);
-        
     }
     return 0;
 }
