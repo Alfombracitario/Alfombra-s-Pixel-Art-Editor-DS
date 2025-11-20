@@ -11,6 +11,13 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 static u16* gfx = SPRITE_GFX;
+void clearVRAM() {
+    dmaFillWords(0, (void*)0x06800000, 128 * 1024);
+    dmaFillWords(0, (void*)0x06820000, 128 * 1024);
+    dmaFillWords(0, (void*)0x06840000, 128 * 1024);
+    dmaFillWords(0, (void*)0x06860000, 128 * 1024);
+}
+
 void topBackground8() {
     u8* v = (u8*)bgGetGfxPtr(2);
     for (int i = 0; i < 16; i++) {
@@ -44,6 +51,7 @@ void drawStars() {
     }
 }
 void intro() {
+    clearVRAM();
     mmInitDefaultMem((mm_addr)soundbank_bin);
     mmLoad(MOD_INTRO);
     mmStart(MOD_INTRO, MM_PLAY_ONCE);

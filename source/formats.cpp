@@ -13,6 +13,7 @@ extern u16 palette[256];
 extern int surfaceXres;
 extern int surfaceYres;
 extern int paletteSize;
+extern int paletteBpp;
 
 int importNES(const char* path, u16* surface) {
     FILE* f = fopen(path, "rb");
@@ -1197,4 +1198,132 @@ int exportTGA(const char* path, u16* surface, int width, int height) {
 
     fclose(f);
     return 1;
+}
+
+void exportACS(const char* path, u16* surface){
+    //este código está exageradamente comentado ya que como es un formato que estoy haciendo,
+    //quiero poder volver y entender todo esto así sin tener que reaprender nada :)
+
+    // revisar si la imagen es válida
+    if(surfaceXres < 2 || surfaceXres >= 8){ return; }
+
+    // preparar puntero a backup como byte array
+    uint8_t* data = (uint8_t*)backup;
+
+    int ind = 0;
+
+    // ENCABEZADO (3 bytes)
+    u8 ver = 0;
+    u8 compression = 0;
+    u8 fType = 0;
+
+    data[0] = (ver<<4)|(fType<<2)|(compression);
+
+    // resoluciones ACS
+    u8 resTable[8] = {15,15,2,3,4,6,8,10};
+    data[1] = (resTable[surfaceXres]<<4)|(resTable[surfaceYres]);
+
+    // byte configuraciones (se completa después)
+    data[2] = 0;
+    data[3] = 0;
+
+    // CONTADOR DE COLORES (INTEGRADO)
+
+    // usamos data[4 ... 32771] como tabla de colores (32768 bytes)
+    uint8_t* table = &data[4];
+
+    int totalPixels = 1<<surfaceXres<<surfaceYres;
+    int unique = 0;
+    int gray = 1;
+    int maxCol = 0;
+
+    //para que el sistema de detección de colores sea efectivo en hardware real, debemos limpiar la memoria
+    u16 cleanSize = paletteBpp == 16 ? 32768 : 256;//revisar si estoy limpiando la cantiad correcta(!)
+    dmaFillHalfWords(0, table, cleanSize);
+    //ahora sí podemos manipular este código!
+    for(int i = 0; i<totalPixels; i++){
+        u16 px = surface[i] & 0x7FFF; // ignorar bit alpha ARGB1555
+
+        //contar colores únicos
+        if(!table[px]){
+            //Se detectó un color nuevo
+            table[px] = 1;//asignar ese color a la tabla de colores existentes (útil para direct)
+            unique++;
+            
+            //intentar obtener el color más grande (útil para index)
+            maxCol = max(maxCol,px);
+
+            //detectar escala de grises
+            if(gray == 1){
+                int r = (px >> 10) & 0x1F;
+                int g = (px >>  5) & 0x1F;
+                int b =  px        & 0x1F;
+
+                if(!(r == g && g == b)){
+                    gray = 0;
+                }
+            }
+        }
+
+    }
+
+    // CONFIG. COLOR Y BPP
+    u8 colorConfig = gray ? 3 : 0;   // 3 = grayscale, 0 = normal ARGB 1555 (DS nativo)
+
+    u8 bpp = 0;//1bpp o 16bpp
+    if(paletteBpp == 16){maxCol = unique;}//si estamos en modo direct, la cantidad de colores se mide distinto.
+    //Recordemos que maxCol es el indice más alto usado en la surface
+    if(maxCol < 4){
+        bpp = 1;//2bpp
+    }else if(maxCol < 16){
+        bpp = 2;//4bpp
+    }else if(maxCol < 256){
+        bpp = 3;//8bpp
+    }
+
+    data[2] = (bpp<<6) | (colorConfig<<3);//primeros 3 bits reservados
+
+    // BYTE 3: cantidad de colores en paleta
+    u8 colorCount;
+
+    if(maxCol > 255){
+        colorCount = 0;  // modo directo → no usa paleta
+    }else{
+        colorCount = maxCol;
+        //aunque tengamos indices sin usar, si usaramos solo los colores ocupados, 
+        //tendríamos que rehacer la surface para leerla correctamente con los colores sí usados
+    }
+
+    data[3] = colorCount;
+
+    ind = 3;
+    //FINAL DEL ENCABEZADO, ahora vienen los colores
+
+    //dependiendo del modo de color se guardan de una manera u otra
+    if(colorConfig == 0){
+        for(int i = 0; i < colorCount; i++){
+            u16 col = palette[i];
+            data[ind] = col>>8;//primer byte del color
+            ind++;
+            data[ind] = col & 0xFF;//segundo byte del color
+            ind++;
+        }
+    }
+    else{
+        for(int i = 0; i < colorCount; i++){//guardar los colores en Grayscale8
+            data[ind] = (palette[i] & 0b11111)<<3;//convertir a gris
+            ind++;
+        }
+    }
+
+    // --------------------------- Escritura de pixeles --------------------------------|
+
+    //tenemos dos sistemas principales, indexed y direct, ambos funcionan bastante distinto así que hay una ramificación para cada uno
+
+    if(colorCount == 0){//modo directo ARGB 1555
+
+    }else{//Modo indexiado general
+
+    }
+
 }
