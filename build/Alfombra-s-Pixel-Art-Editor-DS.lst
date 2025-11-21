@@ -599,11 +599,11 @@
 0201ffdc 00000056 T __aeabi_lmul
 0201ffdc 00000056 T __muldi3
 02020034 T _fini
-02020040 00000008 t __memcpy_from_arm
-02020048 00000008 t __free_from_arm
-02020050 00000008 t ____aeabi_ldiv0_from_arm
-02020058 00000008 t ____aeabi_idiv0_from_arm
-02020060 00000008 t ____libc_lock_release_from_arm
+02020040 00000008 t __free_from_arm
+02020048 00000008 t ____aeabi_idiv0_from_arm
+02020050 00000008 t __memcpy_from_arm
+02020058 00000008 t ____libc_lock_release_from_arm
+02020060 00000008 t ____aeabi_ldiv0_from_arm
 02020068 T soundbank_bin
 02023bb8 T GFXalfPresentsBitmap
 02023bb8 T soundbank_bin_end
@@ -614,219 +614,219 @@
 0202bfac T GFXintroBitmap
 0202edb4 T GFXnewImageInputBitmap
 02032358 T GFXselector24Bitmap
-020332a4 00000080 t nesPalette
-020334dc 00000010 t s_dvmDiscCalicoIface
-020334ec 00000010 t s_dvmDiscCacheIface
-020334fc 00000014 t fr_to_errno.0
-02033510 00000014 T g_vfatFsDriver
-02033524 00000080 t _FAT_devoptab
-020335a4 00000080 t ExCvt
-02033624 0000000d t LfnOfs
-0203363c 000000bc t cvt2.0
-020336f8 000001f2 t cvt1.1
-020338f0 00000100 t uc437
-02033ac4 00000080 t dotab_stdout
-02033b58 00000040 t registerNames
-02033b98 00000102 T SIN_LUT
-02033c9c T default_font_bin
-0203449c T default_font_bin_end
-020345b8 00000030 t _DAYS_BEFORE_MONTH
-020345e8 00000030 t DAYS_IN_MONTH
-02034654 00000010 t zeroes.0
-02034664 00000010 t blanks.1
-02034674 00000101 T _ctype_
-02034778 0000006c T __action_table
-020347e4 0000006c T __state_table
-02034850 00000100 T __chclass
-02034950 00000010 t zeroes.0
-02034960 00000010 t blanks.1
-02034970 00000022 t basefix.0
-02034994 00000060 T __month_lengths
-020349f4 0000000c t p05.0
-02034a00 00000028 T __mprec_bigtens
-02034a28 000000c8 T __mprec_tens
-02034af0 000035dc t categories
-020380cc 00000080 T dotab_stdnull
-02038150 00000004 D keyboardUpper
-02038154 00000004 D keyboardLower
-02038158 00000101 D path
-02038259 00000001 D both
-0203825c 00000004 D resY
-02038260 00000004 D resX
-02038264 00000001 D currentSubMode
-02038268 00000004 D stackXres
-0203826c 00000004 D stackYres
-02038270 00000004 D surfaceYres
-02038274 00000004 D surfaceXres
-02038278 00000004 D sleepingFrames
-0203827c 00000004 D sleepTimer
-02038280 00000004 D subSurfaceZoom
-02038284 00000004 D paletteBpp
-02038288 00000004 D paletteSize
-0203828c 00000004 D backupIndex
-02038290 00000004 D backupSize
-02038294 00000004 D backupMax
-02038298 00000004 D pixelsVRAM
-0203829c 00000004 D pixelsTopVRAM
-020382a0 00000010 d s_dvmDiscNand
-020382b0 00000010 d s_dvmDiscSd
-020382c0 00000010 d s_dvmDiscDldi
-020382d0 00000004 V g_dvmDefaultSectorsPerPage
-020382d4 00000004 V g_dvmDefaultCachePages
-020382d8 00000020 d s_dvmFsDrvTable
-020382f8 00000020 D bgTransform
-02038318 00000020 D bgScrollTable
-02038338 00000020 D bgControl
-02038358 00000001 d firstConsoleInit.0
-0203835c 00000004 D currentConsole
-02038360 0000005c D defaultConsole
-020383bc 0000000c D decomStream
-020383c8 00000001 d count
-020383c9 00000001 d repeat
-020383ca 00000001 d delay
-020383cc 00000018 D oamSub
-020383e4 00000018 D oamMain
-020383fc 00000004 D g_dietPrintFn
-02038400 0000000c D __sglue
-0203840c 00000004 D __malloc_sbrk_base
-02038410 00000004 D __malloc_trim_threshold
-02038418 00000408 D __malloc_av_
-02038820 00000004 D _impure_ptr
-02038828 00000140 D _impure_data
-02038968 00000008 D _tzname
-02038970 0000016c D __global_locale
-02038ae0 00000058 d tzinfo
-02038b38 00000004 D environ
-02038b3c 00000400 d _current_working_directory
-02038f40 00001000 d handles
-02039f40 0000000c d __stderr_handle
-02039f4c 0000000c d __stdout_handle
-02039f58 0000000c d __stdin_handle
-02039f64 0000008c D devoptab_list
-02039ff0 00000004 d defaultDevice
-02039ff4 00008000 D surface
-02041ff4 r __EH_FRAME_BEGIN__
-02041ff4 r __FRAME_END__
-02041ff8 r __tls_info
-02042004 d __frame_dummy_init_array_entry
-02042004 d __init_array_start
-02042004 d __preinit_array_end
-02042004 d __preinit_array_start
-02042008 d __do_global_dtors_aux_fini_array_entry
-02042008 d __fini_array_start
-02042008 d __init_array_end
-0204200c d __fini_array_end
-0204200c d __main_end
-02042010 ? __tls_end
-02042010 ? __tls_start
-02042010 b completed.1
-02042014 b object.0
-02042030 00000200 b AVdrawRectangle(unsigned short*, int, int, int, int, unsigned short)::tempLine
-02042230 00000008 B lastTime
-02042238 00000004 B frameCount
-0204223c 00000004 B fps
-02042240 00000004 B selectorA
-02042244 00000004 B selector
-02042248 00000006 B format
-02042250 00000004 B fileCount
-02042254 00010800 B entryList
-0204a0c4 a __loadlist_start
-0204a0f4 a __loadlist_end
-02052a54 00000004 B currentDir
-02052a58 00000010 B text
-02052a68 00000001 B currentTool
-02052a6c 00000004 B gridSkips
-02052a70 00000001 B mayus
-02052a71 00000001 B acurrate
-02052a72 00000001 B updated
-02052a73 00000001 B drew
-02052a74 00000001 B showGrid
-02052a75 00000001 B stylusPressed
-02052a78 00000004 B kUp
-02052a7c 00000004 B kHeld
-02052a80 00000004 B kDown
-02052a84 00000001 B currentConsoleMode
-02052a88 00000004 B subSurfaceYoffset
-02052a8c 00000004 B subSurfaceXoffset
-02052a90 00000004 B mainSurfaceYoffset
-02052a94 00000004 B mainSurfaceXoffset
-02052a98 00000004 B prevtpy
-02052a9c 00000004 B prevtpx
-02052aa0 00000003 B palEdit
-02052aa3 00000001 B nesMode
-02052aa4 00000004 B paletteOffset
-02052aa8 00000004 B palettePos
-02052aac 00000008 B touch
-02052ab4 00040000 B pages
-02092ab4 00040000 B backup
-020d2ab4 00008000 B stack
-020daab8 00000200 B palette
-020dacb8 00018000 B pixels
-020f2cb8 00018000 B pixelsTop
-0210acb8 0000005c b topConsole
-0210ad14 00000004 V g_dvmCalicoNandMount
-0210ad18 00000002 b Fsid
-0210ad1c 00000008 B bgIsTextLut
-0210ad24 00000140 B bgState
-0210ae64 0000005c B currentCopy
-0210aec0 00000002 b keysrepeat
-0210aec4 00000004 b s_keypad
-0210aec8 00000400 B OamMemory
-0210b2c8 00000400 B OamMemorySub
-0210b6c8 W g_excptHandler
-0210b6cc 00000012 b s_mmEffState
-0210b6e0 00000004 b s_mmCallback
-0210b6e4 00000001 b s_mmActiveStatus
-0210b6e8 00000010 B s_mmState
-0210b6f8 00000004 b s_mmLoader
-0210b6fc 00000004 b s_firstTask
-0210b700 00000008 b s_highTickCount
-0210b708 00000001 b s_tickInit
-0210b70c 00000008 b s_sleepThreads
-0210b714 00000008 b s_joinThreads
-0210b71c 00000070 b s_idleThread
-0210b78c 00000070 b s_mainThread
-0210b7fc 00000004 b s_defaultErrno.0
-0210b800 00000004 V __stacksize__
-0210b804 00000001 B g_isTwlMode
-0210b808 000001f0 b s_pxiChannels
-0210b9f8 00000004 b s_pxiRecvState
-0210b9fc 00000008 b s_pxiRecvQueue
-0210ba04 00000004 b s_pxiSendMutex
-0210ba08 00000200 b s_pmPxiThreadStack
-0210bc08 00000070 b s_pmPxiThread
-0210bc78 00000008 b s_pmState
-0210bc80 00000002 b s_soundPxiCredits
-0210bc84 00000008 b s_soundPxiCreditWaitList
-0210bc8c 00000001 b s_soundInit
-0210bc90 00000008 b s_mailboxRecvQueue
-0210bc98 0000000c b __sfp_recursive_mutex
-0210bca8 00000168 B __sf
-0210be10 00000004 B __stdio_exit_handler
-0210be14 00000004 b __tz_mutex
-0210be18 00000028 B __malloc_current_mallinfo
-0210be40 00000004 B __malloc_max_total_mem
-0210be44 00000004 B __malloc_max_sbrked_mem
-0210be48 00000004 B __malloc_top_pad
-0210be4c 0000000c b __malloc_recursive_mutex
-0210be58 00000004 B _timezone
-0210be5c 00000004 B _daylight
-0210be60 00000004 b prev_tzenv
-0210be64 0000000c b __tzname_dst
-0210be70 0000000c b __tzname_std
-0210be7c 0000000c b __env_recursive_mutex
-0210be88 00000004 b initial_env
-0210be8c 00000400 b temp_cwd
-0210c28c 00000004 b __hndl_lock
-0210c290 00000004 B fake_heap_start
-0210c294 00000004 B fake_heap_end
-0210c298 00000004 b heap_start.0
-0210c29c b __heap_start_ntr
-0210c29c b __main_bss_end
-0210c2a0 r __heap_start_twl
-0210c2a0 ? __twl_bss_end
-0210c2a0 ? __twl_end
-0210c2a0 ? __twl_start
+020332e4 00000080 t nesPalette
+0203351c 00000010 t s_dvmDiscCalicoIface
+0203352c 00000010 t s_dvmDiscCacheIface
+0203353c 00000014 t fr_to_errno.0
+02033550 00000014 T g_vfatFsDriver
+02033564 00000080 t _FAT_devoptab
+020335e4 00000080 t ExCvt
+02033664 0000000d t LfnOfs
+0203367c 000000bc t cvt2.0
+02033738 000001f2 t cvt1.1
+02033930 00000100 t uc437
+02033b04 00000080 t dotab_stdout
+02033b98 00000040 t registerNames
+02033bd8 00000102 T SIN_LUT
+02033cdc T default_font_bin
+020344dc T default_font_bin_end
+020345f8 00000030 t _DAYS_BEFORE_MONTH
+02034628 00000030 t DAYS_IN_MONTH
+02034694 00000010 t zeroes.0
+020346a4 00000010 t blanks.1
+020346b4 00000101 T _ctype_
+020347b8 0000006c T __action_table
+02034824 0000006c T __state_table
+02034890 00000100 T __chclass
+02034990 00000010 t zeroes.0
+020349a0 00000010 t blanks.1
+020349b0 00000022 t basefix.0
+020349d4 00000060 T __month_lengths
+02034a34 0000000c t p05.0
+02034a40 00000028 T __mprec_bigtens
+02034a68 000000c8 T __mprec_tens
+02034b30 000035dc t categories
+0203810c 00000080 T dotab_stdnull
+02038190 00000004 D keyboardUpper
+02038194 00000004 D keyboardLower
+02038198 00000101 D path
+02038299 00000001 D both
+0203829c 00000004 D resY
+020382a0 00000004 D resX
+020382a4 00000001 D currentSubMode
+020382a8 00000004 D stackXres
+020382ac 00000004 D stackYres
+020382b0 00000004 D surfaceYres
+020382b4 00000004 D surfaceXres
+020382b8 00000004 D sleepingFrames
+020382bc 00000004 D sleepTimer
+020382c0 00000004 D subSurfaceZoom
+020382c4 00000004 D paletteBpp
+020382c8 00000004 D paletteSize
+020382cc 00000004 D backupIndex
+020382d0 00000004 D backupSize
+020382d4 00000004 D backupMax
+020382d8 00000004 D pixelsVRAM
+020382dc 00000004 D pixelsTopVRAM
+020382e0 00000010 d s_dvmDiscNand
+020382f0 00000010 d s_dvmDiscSd
+02038300 00000010 d s_dvmDiscDldi
+02038310 00000004 V g_dvmDefaultSectorsPerPage
+02038314 00000004 V g_dvmDefaultCachePages
+02038318 00000020 d s_dvmFsDrvTable
+02038338 00000020 D bgTransform
+02038358 00000020 D bgScrollTable
+02038378 00000020 D bgControl
+02038398 00000001 d firstConsoleInit.0
+0203839c 00000004 D currentConsole
+020383a0 0000005c D defaultConsole
+020383fc 0000000c D decomStream
+02038408 00000001 d count
+02038409 00000001 d repeat
+0203840a 00000001 d delay
+0203840c 00000018 D oamSub
+02038424 00000018 D oamMain
+0203843c 00000004 D g_dietPrintFn
+02038440 0000000c D __sglue
+0203844c 00000004 D __malloc_sbrk_base
+02038450 00000004 D __malloc_trim_threshold
+02038458 00000408 D __malloc_av_
+02038860 00000004 D _impure_ptr
+02038868 00000140 D _impure_data
+020389a8 00000008 D _tzname
+020389b0 0000016c D __global_locale
+02038b20 00000058 d tzinfo
+02038b78 00000004 D environ
+02038b7c 00000400 d _current_working_directory
+02038f80 00001000 d handles
+02039f80 0000000c d __stderr_handle
+02039f8c 0000000c d __stdout_handle
+02039f98 0000000c d __stdin_handle
+02039fa4 0000008c D devoptab_list
+0203a030 00000004 d defaultDevice
+0203a034 00008000 D surface
+02042034 r __EH_FRAME_BEGIN__
+02042034 r __FRAME_END__
+02042038 r __tls_info
+02042044 d __frame_dummy_init_array_entry
+02042044 d __init_array_start
+02042044 d __preinit_array_end
+02042044 d __preinit_array_start
+02042048 d __do_global_dtors_aux_fini_array_entry
+02042048 d __fini_array_start
+02042048 d __init_array_end
+0204204c d __fini_array_end
+0204204c d __main_end
+02042050 ? __tls_end
+02042050 ? __tls_start
+02042050 b completed.1
+02042054 b object.0
+02042070 00000200 b AVdrawRectangle(unsigned short*, int, int, int, int, unsigned short)::tempLine
+02042270 00000008 B lastTime
+02042278 00000004 B frameCount
+0204227c 00000004 B fps
+02042280 00000004 B selectorA
+02042284 00000004 B selector
+02042288 00000006 B format
+02042290 00000004 B fileCount
+02042294 00010800 B entryList
+0204a104 a __loadlist_start
+0204a134 a __loadlist_end
+02052a94 00000004 B currentDir
+02052a98 00000010 B text
+02052aa8 00000001 B currentTool
+02052aac 00000004 B gridSkips
+02052ab0 00000001 B mayus
+02052ab1 00000001 B acurrate
+02052ab2 00000001 B updated
+02052ab3 00000001 B drew
+02052ab4 00000001 B showGrid
+02052ab5 00000001 B stylusPressed
+02052ab8 00000004 B kUp
+02052abc 00000004 B kHeld
+02052ac0 00000004 B kDown
+02052ac4 00000001 B currentConsoleMode
+02052ac8 00000004 B subSurfaceYoffset
+02052acc 00000004 B subSurfaceXoffset
+02052ad0 00000004 B mainSurfaceYoffset
+02052ad4 00000004 B mainSurfaceXoffset
+02052ad8 00000004 B prevtpy
+02052adc 00000004 B prevtpx
+02052ae0 00000003 B palEdit
+02052ae3 00000001 B nesMode
+02052ae4 00000004 B paletteOffset
+02052ae8 00000004 B palettePos
+02052aec 00000008 B touch
+02052af4 00040000 B pages
+02092af4 00040000 B backup
+020d2af4 00008000 B stack
+020daaf8 00000200 B palette
+020dacf8 00018000 B pixels
+020f2cf8 00018000 B pixelsTop
+0210acf8 0000005c b topConsole
+0210ad54 00000004 V g_dvmCalicoNandMount
+0210ad58 00000002 b Fsid
+0210ad5c 00000008 B bgIsTextLut
+0210ad64 00000140 B bgState
+0210aea4 0000005c B currentCopy
+0210af00 00000002 b keysrepeat
+0210af04 00000004 b s_keypad
+0210af08 00000400 B OamMemory
+0210b308 00000400 B OamMemorySub
+0210b708 W g_excptHandler
+0210b70c 00000012 b s_mmEffState
+0210b720 00000004 b s_mmCallback
+0210b724 00000001 b s_mmActiveStatus
+0210b728 00000010 B s_mmState
+0210b738 00000004 b s_mmLoader
+0210b73c 00000004 b s_firstTask
+0210b740 00000008 b s_highTickCount
+0210b748 00000001 b s_tickInit
+0210b74c 00000008 b s_sleepThreads
+0210b754 00000008 b s_joinThreads
+0210b75c 00000070 b s_idleThread
+0210b7cc 00000070 b s_mainThread
+0210b83c 00000004 b s_defaultErrno.0
+0210b840 00000004 V __stacksize__
+0210b844 00000001 B g_isTwlMode
+0210b848 000001f0 b s_pxiChannels
+0210ba38 00000004 b s_pxiRecvState
+0210ba3c 00000008 b s_pxiRecvQueue
+0210ba44 00000004 b s_pxiSendMutex
+0210ba48 00000200 b s_pmPxiThreadStack
+0210bc48 00000070 b s_pmPxiThread
+0210bcb8 00000008 b s_pmState
+0210bcc0 00000002 b s_soundPxiCredits
+0210bcc4 00000008 b s_soundPxiCreditWaitList
+0210bccc 00000001 b s_soundInit
+0210bcd0 00000008 b s_mailboxRecvQueue
+0210bcd8 0000000c b __sfp_recursive_mutex
+0210bce8 00000168 B __sf
+0210be50 00000004 B __stdio_exit_handler
+0210be54 00000004 b __tz_mutex
+0210be58 00000028 B __malloc_current_mallinfo
+0210be80 00000004 B __malloc_max_total_mem
+0210be84 00000004 B __malloc_max_sbrked_mem
+0210be88 00000004 B __malloc_top_pad
+0210be8c 0000000c b __malloc_recursive_mutex
+0210be98 00000004 B _timezone
+0210be9c 00000004 B _daylight
+0210bea0 00000004 b prev_tzenv
+0210bea4 0000000c b __tzname_dst
+0210beb0 0000000c b __tzname_std
+0210bebc 0000000c b __env_recursive_mutex
+0210bec8 00000004 b initial_env
+0210becc 00000400 b temp_cwd
+0210c2cc 00000004 b __hndl_lock
+0210c2d0 00000004 B fake_heap_start
+0210c2d4 00000004 B fake_heap_end
+0210c2d8 00000004 b heap_start.0
+0210c2dc b __heap_start_ntr
+0210c2dc b __main_bss_end
+0210c2e0 r __heap_start_twl
+0210c2e0 ? __twl_bss_end
+0210c2e0 ? __twl_end
+0210c2e0 ? __twl_start
 02400000 a __twl_lma
 02400000 a __twl_loadlist_lma
 02400000 a __twl_loadlist_start

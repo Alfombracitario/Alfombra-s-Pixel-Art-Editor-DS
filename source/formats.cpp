@@ -15,6 +15,44 @@ extern int surfaceYres;
 extern int paletteSize;
 extern int paletteBpp;
 
+// ============================================================================
+//  Funciones auxiliares (puedes moverlas arriba o hacerlas inline)
+// ============================================================================
+
+// Hash rápido para fragmentos pequeños
+static inline uint32_t fastHash(const uint16_t* p, int len){
+    uint32_t h = 2166136261u;
+    for(int i=0;i<len;i++){
+        h = (h ^ p[i]) * 16777619u;
+    }
+    return h;
+}
+
+// Hash invertido (para mirror)
+static inline uint32_t fastHashRev(const uint16_t* p, int len){
+    uint32_t h = 2166136261u;
+    for(int i=len-1; i>=0; i--){
+        h = (h ^ p[i]) * 16777619u;
+    }
+    return h;
+}
+
+// Confirmar mirror
+static inline int isMirror(const uint16_t* a, const uint16_t* b, int len){
+    for(int i=0;i<len;i++){
+        if(a[i] != b[len-1-i]) return 0;
+    }
+    return 1;
+}
+
+// Confirmar igual
+static inline int isEqual(const uint16_t* a, const uint16_t* b, int len){
+    for(int i=0;i<len;i++){
+        if(a[i] != b[i]) return 0;
+    }
+    return 1;
+}
+
 int importNES(const char* path, u16* surface) {
     FILE* f = fopen(path, "rb");
     if (!f) {
@@ -1200,6 +1238,332 @@ int exportTGA(const char* path, u16* surface, int width, int height) {
     return 1;
 }
 
+//advertencia, estos importadores y exportadores de ACS están optimizados específicamente para este editor de pixel art,
+//ACS es un poco más complejo,
+//pero simplemente ignoré ciertos aspectos para que encaje en el hardware de la DS y la estructura de este editor de pixelart
+#define ACScolModeARGB1555   0
+#define ACScolModeARGB8888   1
+#define ACScolModeRGB888     2
+#define ACScolModeGrayScale8 3
+#define ACScolModeGrayScale4 4
+#define ACStotalModes 4
+
+//función auxiliar
+inline void readCommand7(uint8_t byte, int* pInd, u16* surface){
+    //determinar cual es el tipo de comando contra el que estamos tratando
+    switch((byte>>5) & 0b011){
+        case 0:{//repeat pattern
+            //0CCP PPRR
+            u8 repeat = (byte & 0b11)+1;
+            u8 pixels = ((byte>>2) & 0b111)+2;
+
+            int rInd = *pInd-pixels;
+            u8 iterations = repeat*pixels;
+            for(int i = 0; i < iterations; i++){
+                surface[(*pInd)++] = surface[rInd++];
+            }
+        break;}
+        case 1:{//Mirror
+            //001x xxxx
+            //debemos leer para atrás y escribirlo hacia adelante
+            int mInd = *pInd-1;
+            u8 repeat = (byte & 0b11111)+2;
+            for(int i = 0; i < repeat; i++){
+                surface[(*pInd)++] = surface[mInd--];
+            }
+        break;}
+
+        default:{//repetición simple
+            //obtener último color
+            u16 col = surface[*pInd];
+            u8 repeat = byte & 0b111111;//no sumamos uno ya que si el byte fuese 0, no sería detectado
+            for(int i = 0; i<repeat;i++){
+                surface[(*pInd)++] = col;
+            }
+        break;}
+    }
+}
+inline void readCommand8(uint8_t byte, int* pInd, u16* surface){
+    switch(byte>>6){
+        case 0:{//repeat pattern
+            //CCP PPRRR
+            u8 repeat = (byte & 0b111)+1;
+            u8 pixels = ((byte>>3) & 0b111)+2;
+
+            int rInd = *pInd-pixels;
+            u8 iterations = repeat*pixels;
+            for(int i = 0; i < iterations; i++){
+                surface[(*pInd)++] = surface[rInd++];
+            }
+        break;}
+
+        case 1:{//Mirror
+            //debemos leer para atrás y escribirlo hacia adelante
+            int mInd = *pInd-1;
+            u8 repeat = (byte & 0b1111111)+2;
+            for(int i = 0; i < repeat; i++){
+                surface[(*pInd)++] = surface[mInd--];
+            }
+        break;}
+
+        default:{//repetición simple
+            //obtener último color
+            u16 col = surface[*pInd];
+            u8 repeat = (byte & 0b1111111)+1;//aquí ya sabemos que esto es un comando, sumamos 1
+            for(int i = 0; i<repeat;i++){
+                surface[(*pInd)++] = col;
+            }
+        break;}
+    }
+}
+void importACS(const char* path, u16* surface){
+    uint8_t* data = (uint8_t*)backup;
+
+    // abrir archivo
+    FILE* f = fopen(path, "rb");
+    if(!f){
+        return;
+    }
+
+    // obtener tamaño del archivo
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    // asegurarse que cabe en backup
+    if(size > sizeof(backup)){
+        fclose(f);
+        return;
+    }
+
+    // leer archivo dentro de backup[]
+    fread(data, 1, size, f);
+    fclose(f);
+
+    //de momento ignoraremos el byte 0
+
+    int resTable[16] = {0,4,8,16,24,32,48,64,96,128,192,256,320,512,1024,-1};
+    u8 val = data[1];
+    
+    int resX = resTable[val>>4];
+    int resY = resTable[val & 0xF];
+
+    u32 ind = 1;//indice del lector de bytes
+    if(resX == -1){
+        resX = (data[ind++]<<8) | data[ind++];
+    }
+    if(resY == -1){
+        resY = (data[ind++]<<8) | data[ind++];
+    }
+    
+    u32 imgRes = resX*resY;
+
+    //leer el tercer encabezado
+    val = data[ind++];
+    u8 bpp = val>>6;
+
+    paletteBpp = 1<<bpp;
+
+    u8 colorMode = (val>>3) & 0b111;
+    if(colorMode > ACStotalModes){return;}//no es un formato soportado por este lector
+    u8 colorCount = data[ind++];
+
+    if(colorCount > 0){//lector en modo indexeado
+        switch(colorMode){
+            case ACScolModeARGB1555:
+                for(int i = 0; i < colorCount; i++){
+                    palette[i] = (data[ind++]<<8) | data[ind++];//ACS usa el mismo formato que la DS y la SNES
+                }
+            break;
+
+            case ACScolModeARGB8888:
+                for(int i = 0; i < colorCount; i++){//proceso un poco más lento porque debe adaptarse
+                    u8 a = data[ind++]>>7;
+                    u8 r = data[ind++]>>3;
+                    u8 g = data[ind++]>>3;
+                    u8 b = data[ind++]>>3;
+                    palette[i] = (a<<15)|(r<<10)|(g<<5)|(b);
+                }
+            break;
+
+            case ACScolModeGrayScale4:
+                for(int i = 0; i < colorCount; i++){//proceso un poco más lento porque debe adaptarse
+                    u8 val = data[ind++];
+                    
+                    u8 hi = (val & 0xF0)>>3;
+                    u8 lo = (val & 0x0F)<<1;
+                    palette[i++] = 0x8000 | (hi<<10) | (hi<<5) | hi;
+
+                    if(i >= colorCount){break;}//comprobar si aún quedan colores por escribir
+                    palette[i] = 0x8000 | (lo<<10) | (lo<<5) | lo;
+                }
+            break;
+
+            case ACScolModeGrayScale8:
+                for(int i = 0; i < colorCount; i++){
+                    u8 val = data[ind++]>>3;
+                    palette[i] = 0x8000 | (val<<10) | (val<<5) | val;
+                }
+            break;
+
+            case ACScolModeRGB888:
+                for(int i = 0; i < colorCount; i++){
+                    u8 r = data[ind++]>>3;
+                    u8 g = data[ind++]>>3;
+                    u8 b = data[ind++]>>3;
+
+                    palette[i] = 0x8000 | (r<<10) | (g<<5) | b;
+                }
+            break;
+        }
+        //se terminó de leer los colores
+        if(resX == 0 || resY == 0){return;}//existe un modo oculto de solo paleta
+
+        //ya que estamos en el modo index, debemos leer los byte controls y esas cosas
+        int ByteCtrlCout = (data[ind++]<<8)|data[ind++];
+        int CommandsCount = (data[ind++]<<8)|data[ind++];
+        int Bind = ind;//indice del bytecontrol
+        int cInd = ind+ByteCtrlCout;
+        //FIN DEL HEADER
+
+        ind += (ByteCtrlCout+CommandsCount);
+        int pInd = 0;//indice de pixel
+
+        switch(bpp){
+            case 8:  // --------------------------- 8 BPP --------------------------------
+                while(pInd < imgRes){
+                    u8 ctrlByte = data[Bind + (pInd>>3)];
+                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;//obtener el bit actual del ctrlByte
+
+                    if(bit == 0){
+                        // leer índice directo
+                        u8 index = data[ind++];
+                        surface[pInd++] = palette[index];
+                    }
+                    else{//el bit es un comando!
+                        readCommand8(data[cInd++], &pInd, surface);//avanzamos uno en el lector de comandos
+                    }
+                }
+            break;
+
+            case 4:  // --------------------------- 4 BPP --------------------------------
+                while(pInd < imgRes){
+                    u8 ctrlByte = data[Bind + (pInd>>3)];
+                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;
+
+                    if(bit == 0){
+                        // Leer nibble alto si pInd par, bajo si impar
+                        u8 raw = data[ind];
+                        u8 index;
+                        if((pInd & 1) == 0) index = raw >> 4;
+                        else{ index = raw & 0x0F; ind++; }//si es el nibble bajo, sumamos a ind
+
+                        surface[pInd++] = palette[index];
+                    }
+                    else{
+                        readCommand8(data[cInd++], &pInd, surface);
+                    }
+                }
+            break;
+
+            case 2:  // --------------------------- 2 BPP --------------------------------
+                while(pInd < imgRes){
+                    u8 ctrlByte = data[Bind + (pInd>>3)];
+                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;
+
+                    if(bit == 0){
+                        // 4 píxeles por byte
+                        int shift = 6 - ((pInd & 3) * 2);
+                        u8 index = (data[ind] >> shift) & 3;
+                        surface[pInd++] = palette[index];
+                        if((pInd & 3) == 0) ind++;//solo avanzar un index si ya avanzamos un byte
+                    }
+                    else{
+                        readCommand8(data[cInd++], &pInd, surface);
+                    }
+                }
+            break;
+
+            case 1:  // --------------------------- 1 BPP --------------------------------
+                while(pInd < imgRes){//sí, también hay compresión aquí aunque por lo general usaría más espacio
+                    u8 ctrlByte = data[Bind + (pInd>>3)];
+                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;
+
+                    if(bit == 0){
+                        // 8 píxeles por byte
+                        u8 index = (data[ind] >> (7 - (pInd & 7))) & 1;
+                        surface[pInd++] = palette[index];
+                        if((pInd & 7) == 0) ind++;
+                    }
+                    else{
+                        readCommand8(data[cInd++], &pInd, surface);
+                    }
+                }
+            break;
+        }
+        
+    }else{//lector en modo directo
+        switch(colorMode)
+        {
+            case ACScolModeARGB1555://el mejor modo de todos (en mi opinión)
+                for(int i = 0; i<imgRes; i++){//i siempre representará el indice de pixel en esta parte
+                    u8 hi = data[ind++];
+                    u8 lo = data[ind++];
+                    if(hi < 0x80){//puede ser un comando! (no tiene alpha)
+                        if((hi|lo) != 0){//es un comando!
+                            readCommand7(hi, &i, surface);
+                            //este modo usa 2 bytes, ahora tenemos un byte impar
+                            //hay que repetir el proceso, pero haciendo un crimen: retrocedemos un ind
+                            ind--; continue;
+                        }
+                        else{//es un pixel transparente!
+                            surface[i] = 0;
+                            continue;
+                        }
+                    }
+                    //si no era ni transparente ni comando, escribimos el color
+                    surface[i] = (hi<<8)|lo;
+                }
+            break;
+
+            case ACScolModeARGB8888:
+                for(int i = 0; i<imgRes; i++){
+                    //el color debe ser convertido por limitaciones de hardware de la DS
+                    u8 a = data[ind++]>>7;
+                    u8 r = data[ind++]>>3;
+                    u8 g = data[ind++]>>3;
+                    u8 b = data[ind++]>>3;
+
+                    if(a == 0){//puede ser un comando!
+                        if((r|g|b) != 0){//es un comando!
+                            readCommand7(r,&i,surface);//R guarda el comando en este modo
+                            //retrocedemos el indice del lector binario (crimen!)
+                            ind-=2;continue;//partimos leyendo ahora desde G
+                        }
+                        else{//es un pixel transparente!
+                            surface[i] = 0;
+                            continue;
+                        }
+                    }
+                    //si no era ni transparente ni comando, escribimos el color
+                    surface[i] = (a<<15)|(r<<10)|(g<<5)|b;
+                }
+            break;
+
+
+            //estos casos tienen un comportamiento raro, usando control bytes pero su lectura es direct color.
+            case ACScolModeGrayScale4:
+            break;
+
+            case ACScolModeGrayScale8:
+            break;
+
+            case ACScolModeRGB888:
+            break;
+        }
+    }
+}
+
 void exportACS(const char* path, u16* surface){
     //este código está exageradamente comentado ya que como es un formato que estoy haciendo,
     //quiero poder volver y entender todo esto así sin tener que reaprender nada :)
@@ -1242,7 +1606,7 @@ void exportACS(const char* path, u16* surface){
     dmaFillHalfWords(0, table, cleanSize);
     //ahora sí podemos manipular este código!
     for(int i = 0; i<totalPixels; i++){
-        u16 px = surface[i] & 0x7FFF; // ignorar bit alpha ARGB1555
+        u16 px = surface[i] & 0x7FFF;// ignorar bit alpha ARGB1555
 
         //contar colores únicos
         if(!table[px]){
@@ -1297,7 +1661,7 @@ void exportACS(const char* path, u16* surface){
     data[3] = colorCount;
 
     ind = 3;
-    //FINAL DEL ENCABEZADO, ahora vienen los colores
+    //FINAL DEL ENCABEZADO (parte 1), ahora vienen los colores
 
     //dependiendo del modo de color se guardan de una manera u otra
     if(colorConfig == 0){
@@ -1317,13 +1681,245 @@ void exportACS(const char* path, u16* surface){
     }
 
     // --------------------------- Escritura de pixeles --------------------------------|
+    int iPix = 0;
+    u16 lastColor = 0;
+    const int MAXPAT = 16;
+    const int MINPAT = 2;
 
-    //tenemos dos sistemas principales, indexed y direct, ambos funcionan bastante distinto así que hay una ramificación para cada uno
+    while(iPix < totalPixels){
 
-    if(colorCount == 0){//modo directo ARGB 1555
+        if(colorCount == 0){ // DIRECT MODE -------------------------------------------------------
 
-    }else{//Modo indexiado general
+            u16 curr = surface[iPix];
 
+            //primero buscar patrones
+            int bestSize = 0;
+            int isMirrorFlag = 0;
+            int repeatCount = 1; // por ahora 1 repetición DEBE SER ARREGLADO
+
+            for(int size = MAXPAT; size >= MINPAT; size--){
+                if(iPix + size*2 > totalPixels) continue;
+
+                uint32_t h1 = fastHash(&surface[iPix], size);
+                uint32_t h2 = fastHash(&surface[iPix + size], size);
+
+                if(h1 == h2 && isEqual(&surface[iPix], &surface[iPix + size], size)){
+                    bestSize = size;
+                    isMirrorFlag = 0;
+                    break;
+                }
+
+                uint32_t hr = fastHashRev(&surface[iPix + size], size);
+                if(h1 == hr && isMirror(&surface[iPix], &surface[iPix + size], size)){
+                    bestSize = size;
+                    isMirrorFlag = 1;
+                    break;
+                }
+            }
+
+            if(bestSize > 0){
+                if(isMirrorFlag == 0){
+                    // REPEAT PATTERN: 0CCP PPRR
+                    u8 cmd = 0b00000000;                    // 0xxx xxxx
+                    cmd |= ((bestSize - 2) & 0b111) << 2;   // PPP (3 bits) 
+                    cmd |= ((repeatCount-1) & 0b11);            // RR (2 bits)
+                    
+                    data[++ind] = cmd;
+                    lastColor = surface[iPix + bestSize - 1];
+                    iPix += bestSize * (repeatCount + 1);
+                    continue;
+                }
+                else {
+                    // MIRROR: 0CCM MMMM  
+                    u8 cmd = 0b01000000;                        // 01 (mirror)
+                    cmd |= ((bestSize-2) & 0b11111);           // RRRRR (5 bits)
+                    
+                    data[++ind] = cmd;
+                    lastColor = surface[iPix + bestSize - 1]; 
+                    iPix += bestSize * 2;
+                    continue;
+                }
+            }
+
+            // REPEAT COLOR: 0CRRR RRR
+            if(iPix > 0 && curr == lastColor){
+                int run = 1;//debe empezar con 1
+                for(int k = iPix+1; k < totalPixels && run < 63; k++){ // 6 bits = máximo 63
+                    if(surface[k] == lastColor) run++;
+                    else break;
+                }
+                
+                u8 cmd = (run & 0x3F); // 6 bits completos
+                data[++ind] = cmd;
+                
+                iPix += run;
+                continue;
+            }
+            // Pixel directo
+            data[++ind] = curr >> 8;
+            data[++ind] = curr & 0xFF;
+
+            lastColor = curr;
+            iPix++;
+            continue;
+        }
+
+else { // ========================== MODO INDEXADO ========================================
+
+    // Buffers temporales para este modo
+    static u8 cmdBuf[65536];
+    static u8 ctrlBuf[8192];
+    static u8 pixBuf[65536];
+
+    int cmdInd = 0;
+    int ctrlInd = 0;
+    int pixInd  = 0;
+
+    int ctrlBit = 0;  // bit 0–7 dentro del byte-control
+    u8  currentCtrl = 0;
+
+    int iPix = 0;
+    const int MAXPAT = 16;
+    const int MINPAT = 2;
+
+    u16 lastRaw = 0;   // para comparar repeticiones crudas
+    u8  lastIndex = 0; // para repetir índice
+
+    while(iPix < totalPixels){
+
+        // -----------------------------------------------------------------------
+        // Cerrar byte-control si ya se completó (8 bits)
+        // -----------------------------------------------------------------------
+        if(ctrlBit == 8){
+            ctrlBuf[ctrlInd++] = currentCtrl;
+            currentCtrl = 0;
+            ctrlBit = 0;
+        }
+
+        //obtener indice
+        u8 index = surface[iPix] & 0xFF;//La surface ya está en modo index
+
+        // -----------------------------------------------------------------------
+        // 1. DETECCIÓN DE PATRONES Y MIRROR
+        // -----------------------------------------------------------------------
+        int bestSize = 0;
+        int isMirror = 0;
+        u8 repeats = 1;//DEBE SER CAMBIADO
+        for(int size = MAXPAT; size >= MINPAT; size--){//for para buscar patrones
+            if(iPix + size*2 > totalPixels) continue;
+
+            // comparar patrón normal
+            int ok = 1;
+            for(int k = 0; k < size; k++){
+                u8 a = surface[iPix+k] & 0xFF;
+                u8 b = surface[iPix+size+k] & 0xFF;
+                if(a != b){ ok = 0; break; }
+            }
+            if(ok){
+                bestSize = size;
+                isMirror = 0;
+                break;
+            }
+            // comparar patrón espejo
+            int m = 1;
+            for(int k = 0; k < size; k++){
+                u8 a = surface[iPix+k] & 0xFF;
+                u8 b = surface[iPix+size+(size-1-k)] & 0xFF;
+                if(a != b){ m = 0; break; }
+            }
+            if(m){//efectivamente hay espejo
+                bestSize = size;
+                isMirror = 1;
+                break;
+            }
+        }
+
+        if(bestSize > 0){
+            // marcar este pixel como comando
+            currentCtrl |= (1 << ctrlBit);
+
+            if(isMirror == 0){
+                // ================== PATRÓN NORMAL ==================
+                // Formato indexado: 10PP PRRR
+                u8 cmd = 0b10000000;                 // 10......
+                cmd |= (bestSize & 0b111) << 3;      // PPP
+                cmd |= (repeats & 0b111);            // RRR repetición
+                cmdBuf[cmdInd++] = cmd;
+            } else {
+                // ================== MIRROR ==================
+                // Formato indexado: 11PP PPPP  (PPPPPP = 6 bits)
+                u8 cmd = 0b11000000;                 // 11......
+                cmd |= (bestSize & 0x3F);            // PPPPPP
+                cmdBuf[cmdInd++] = cmd;
+            }
+
+            // saltar fragmento + repetición
+            iPix += bestSize * 2;
+            lastRaw   = surface[iPix-1] & 0x7FFF;
+            lastIndex = lastRaw & 0xFF;
+
+            ctrlBit++;
+            continue;
+        }
+
+
+        // 2. REPETICIÓN DEL ÚLTIMO ÍNDICE
+        if(iPix > 0 && index == lastIndex){
+
+            int run = 1;
+            while(iPix + run < totalPixels && run < 127){
+                u8 nxt = (surface[iPix+run] & 0x7FFF) & 0xFF;
+                if(nxt == lastIndex) run++;
+                else break;
+            }
+
+            // Formato indexado: RRRRRRR (7 bits)
+            currentCtrl |= (1 << ctrlBit);
+            u8 cmd = (run & 0x7F); // solo argumentos
+            cmdBuf[cmdInd++] = cmd;
+
+            iPix += run;
+            ctrlBit++;
+            continue;
+        }
+
+        // -----------------------------------------------------------------------
+        // 3. PIXEL CRUDO (sin comando)
+        // -----------------------------------------------------------------------
+        currentCtrl |= 0 << ctrlBit; 
+        pixBuf[pixInd++] = index;
+
+        lastRaw = index;
+        lastIndex = index;
+        iPix++;
+        ctrlBit++;
     }
 
+    // Guardar último byte-control si quedó incompleto
+    if(ctrlBit > 0){
+        ctrlBuf[ctrlInd++] = currentCtrl;
+    }
+
+    //unir toda la información final
+    data[ind++] = ((ctrlInd & 0xFF00)>>8)|ctrlInd;//almacenar la cantidad de controlBytes
+    data[ind++] = ((cmdInd & 0xFF00)>>8)|cmdInd;//almacenar la cantidad de comandos
+
+    // 1) byte-controls
+    for(int k = 0; k < ctrlInd; k++){
+        data[++ind] = ctrlBuf[k];
+    }
+
+    // 2) comandos
+    for(int k = 0; k < cmdInd; k++){
+        data[++ind] = cmdBuf[k];
+    }
+
+    // 3) pixeles crudos
+    for(int k = 0; k < pixInd; k++){
+        data[++ind] = pixBuf[k];
+    }
+
+}//fin del modo index
+
+}
 }
