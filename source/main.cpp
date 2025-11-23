@@ -68,13 +68,12 @@ u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
-u8 pages[262144];//usa u8 para ahorrar memoria, eso significa que no existen pages en 16bpp
 //ideal añadir un array para guardar más frames
 
 touchPosition touch;
 
 int backupMax = 8;
-int backupSize = 16384;
+int backupSize = 16384;//entry size
 int currentPage = 0;
 int totalPages = 0;
 
@@ -1182,7 +1181,6 @@ void updateFPS() {
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
     initFPS();
-    pages[262143] = 0;
     // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
     videoSetMode(MODE_0_2D);                // modo texto
 
@@ -1666,6 +1664,9 @@ int main(void) {
                                 case 10://Tga
                                     exportTGA(tempPath,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
+                                case 11://ACS
+                                    exportACS(tempPath,surface);
+                                break;
                             }
                             bitmapMode();
                         }
@@ -1727,6 +1728,9 @@ int main(void) {
                                 case 10://TGA
                                     importTGA(tempPath,surface);
                                 break;
+                                case 11://ACS
+                                    importACS(tempPath,surface);
+                                break;
                             }
                             bitmapMode();
                             drawSurfaceMain(true);drawSurfaceBottom();
@@ -1734,13 +1738,16 @@ int main(void) {
                             setBackupVariables();
                         }
                     }
-                    if(kDown & KEY_RIGHT && selectorA < 10){selectorA++;}
+                    //input general
+
+                    #define MaxFormats 12
+                    if(kDown & KEY_RIGHT && selectorA < (MaxFormats-1)){selectorA++;}
                     if(kDown & KEY_LEFT && selectorA > 0){selectorA--;}
                     if(kDown & KEY_UP && selector > 0){selector--;}
                     if(kDown & KEY_DOWN){selector++;}
 
 
-                    char texts[11][32] = {
+                    char texts[MaxFormats][32] = {
                         ".bmp [direct]",
                         ".bmp [8bpp]",
                         ".bmp [4bpp]",
@@ -1751,9 +1758,10 @@ int main(void) {
                         ".pcx",
                         ".pal",
                         ".gif",
-                        ".tga"
+                        ".tga",
+                        ".acs [Custom format]"
                     };
-                    char formats[11][6] = {
+                    char formats[MaxFormats][6] = {
                         ".bmp",
                         ".bmp",
                         ".bmp",
@@ -1764,7 +1772,8 @@ int main(void) {
                         ".pcx",
                         ".pal",
                         ".gif",
-                        ".tga"
+                        ".tga",
+                        ".acs"
                     };
                     strcpy(format,formats[selectorA]);
                     //obtener información del teclado
