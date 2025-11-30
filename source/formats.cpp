@@ -229,11 +229,11 @@ int importSNES(const char* path, u16* surface) {
 
     // leer archivo entero en backup (como bytes)
     size_t bytesToRead = (size_t)(numTiles * 32);
-    size_t bytesRead = fread((uint8_t*)backup, 1, bytesToRead, f);
+    size_t bytesRead = fread((u8*)backup, 1, bytesToRead, f);
     fclose(f);
     if (bytesRead != bytesToRead) return -1;
 
-    uint8_t* data = (uint8_t*)backup; // trabajar por bytes
+    u8* data = (u8*)backup; // trabajar por bytes
 
     const int tilesPerRow = 16; // 16
     // Limpiar surface por si sobra espacio
@@ -249,10 +249,10 @@ int importSNES(const char* path, u16* surface) {
         // cada tile: bytes 0-15 -> bitplanes 0&1 (2bpp chunk)
         //             bytes 16-31 -> bitplanes 2&3 (2bpp chunk)
         for (int row = 0; row < 8; ++row) {
-            uint8_t low  = data[base + row*2 + 0]; // plane0
-            uint8_t high = data[base + row*2 + 1]; // plane1
-            uint8_t low2  = data[base + 16 + row*2 + 0]; // plane2
-            uint8_t high2 = data[base + 16 + row*2 + 1]; // plane3
+            u8 low  = data[base + row*2 + 0]; // plane0
+            u8 high = data[base + row*2 + 1]; // plane1
+            u8 low2  = data[base + 16 + row*2 + 0]; // plane2
+            u8 high2 = data[base + 16 + row*2 + 1]; // plane3
 
             int dstRow = tileY + row;
             int dstBase = dstRow * 128 + tileX;
@@ -287,7 +287,7 @@ int exportSNES(const char* path, u16* surface, int height) {
     const int numTiles = tilesPerRow * tilesHigh;
     const size_t bytesToWrite = (size_t)numTiles * 32;
 
-    uint8_t* data = (uint8_t*)backup; // escribir en backup como bytes
+    u8* data = (u8*)backup; // escribir en backup como bytes
 
     // preparar buffer a cero (solo sobre los bytes que vamos a usar)
     memset(data, 0, bytesToWrite);
@@ -298,7 +298,7 @@ int exportSNES(const char* path, u16* surface, int height) {
         size_t base = (size_t)t * 32;
 
         for (int row = 0; row < 8; ++row) {
-            uint8_t low = 0, high = 0, low2 = 0, high2 = 0;
+            u8 low = 0, high = 0, low2 = 0, high2 = 0;
             int srcRow = tileY + row;
             int srcBase = srcRow * 128 + tileX;
 
@@ -306,10 +306,10 @@ int exportSNES(const char* path, u16* surface, int height) {
             for (int x = 0; x < 8; ++x) {
                 u16 pix = surface[srcBase + x] & 0xF; // tomar sólo 4 bits
                 int bit = 7 - x;
-                low  |= (uint8_t)((pix & 1) << bit);
-                high |= (uint8_t)((((pix >> 1) & 1) << bit));
-                low2 |= (uint8_t)((((pix >> 2) & 1) << bit));
-                high2|= (uint8_t)((((pix >> 3) & 1) << bit));
+                low  |= (u8)((pix & 1) << bit);
+                high |= (u8)((((pix >> 1) & 1) << bit));
+                low2 |= (u8)((((pix >> 2) & 1) << bit));
+                high2|= (u8)((((pix >> 3) & 1) << bit));
             }
 
             data[base + row*2 + 0] = low;
@@ -319,7 +319,7 @@ int exportSNES(const char* path, u16* surface, int height) {
         }
     }
 
-    size_t written = fwrite((uint8_t*)backup, 1, bytesToWrite, f);
+    size_t written = fwrite((u8*)backup, 1, bytesToWrite, f);
     fclose(f);
 
     if (written != bytesToWrite) return -1;
@@ -439,7 +439,7 @@ int exportPal(const char* path){
         backup[i] = b<<3;i++;
     }
 
-    size_t written = fwrite((uint8_t*)backup, 1, bytesToWrite, f);
+    size_t written = fwrite((u8*)backup, 1, bytesToWrite, f);
     fclose(f);
 
     if (written != bytesToWrite) return -1;
@@ -709,19 +709,19 @@ int loadBMP_direct(const char* filename, uint16_t* surface) {
                     fread(&raw, 2, 1, in);
 
                     // Intentar detectar 565 y convertir a 1555
-                    uint8_t r = (raw >> 11) & 0x1F;
-                    uint8_t g = (raw >> 5) & 0x3F;
-                    uint8_t b = raw & 0x1F;
+                    u8 r = (raw >> 11) & 0x1F;
+                    u8 g = (raw >> 5) & 0x3F;
+                    u8 b = raw & 0x1F;
                     // Convertir 565 → 555
                     g >>= 1;
                     color = (b << 10) | (g << 5) | r | 0x8000;
                 } 
                 else if(bpp == 24) {
-                    uint8_t bgr[3];
+                    u8 bgr[3];
                     fread(bgr, 3, 1, in);
-                    uint8_t b = bgr[0] >> 3;
-                    uint8_t g = bgr[1] >> 3;
-                    uint8_t r = bgr[2] >> 3;
+                    u8 b = bgr[0] >> 3;
+                    u8 g = bgr[1] >> 3;
+                    u8 r = bgr[2] >> 3;
                     color = (b << 10) | (g << 5) | r | 0x8000;
                 }
             }
@@ -773,18 +773,18 @@ void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface)
     // --- Paleta: convertir de ARGB1555 a BGRA8888 ---
     for(int i=0; i<numColors; i++) {
         uint16_t c = palette[i];
-        uint8_t a = (c & 0x8000) ? 255 : 0;
-        uint8_t r = (c & 0x1F)<<3;
-        uint8_t g = ((c >> 5)  & 0x1F)<<3;
-        uint8_t b = ((c >> 10)  & 0x1F)<<3;
-        uint8_t entry[4] = { b, g, r, a }; // BMP espera BGRA
+        u8 a = (c & 0x8000) ? 255 : 0;
+        u8 r = (c & 0x1F)<<3;
+        u8 g = ((c >> 5)  & 0x1F)<<3;
+        u8 b = ((c >> 10)  & 0x1F)<<3;
+        u8 entry[4] = { b, g, r, a }; // BMP espera BGRA
         fwrite(entry, 4, 1, out);
     }
 
     // --- Píxeles (índices), bottom-up ---
     for(int y = height-1; y >= 0; y--) {
         for(int x = 0; x < width; x++) {
-            uint8_t idx = (uint8_t)(surface[y*width + x] & 0xFF);
+            u8 idx = (u8)(surface[y*width + x] & 0xFF);
             fwrite(&idx, 1, 1, out);
         }
     }
@@ -825,11 +825,11 @@ int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) 
 
     // ===================== Leer paleta (BGRA → ARGB1555) =====================
     for(int i = 0; i < numColors; i++) {
-        uint8_t entry[4];
+        u8 entry[4];
         fread(entry, 4, 1, in);
-        uint8_t b = entry[0];
-        uint8_t g = entry[1];
-        uint8_t r = entry[2];
+        u8 b = entry[0];
+        u8 g = entry[1];
+        u8 r = entry[2];
         palette[i] = (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) | 0x8000;
     }
 
@@ -839,7 +839,7 @@ int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) 
     // Se rellenan los bordes sobrantes con índice 0
     for(int y = 0; y < paddedH; y++) {
         for(int x = 0; x < paddedW; x++) {
-            uint8_t idx = 0;
+            u8 idx = 0;
             if(y < height && x < width) {
                 // Recordar que los BMP están invertidos verticalmente
                 fseek(in, fileHeader.bfOffBits + ((height - 1 - y) * width) + x, SEEK_SET);
@@ -894,24 +894,24 @@ void saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     // Paleta (ARGB1555 → BGRA8888)
     for (int i = 0; i < numColors; i++) {
         uint16_t c = palette[i];
-        uint8_t a = (c & 0x8000) ? 255 : 0;
-        uint8_t r = (c & 0x1F) << 3;
-        uint8_t g = ((c >> 5) & 0x1F) << 3;
-        uint8_t b = ((c >> 10) & 0x1F) << 3;
-        uint8_t entry[4] = { b, g, r, a };
+        u8 a = (c & 0x8000) ? 255 : 0;
+        u8 r = (c & 0x1F) << 3;
+        u8 g = ((c >> 5) & 0x1F) << 3;
+        u8 b = ((c >> 10) & 0x1F) << 3;
+        u8 entry[4] = { b, g, r, a };
         fwrite(entry, 4, 1, out);
     }
 
     // Píxeles (4bpp) → dos píxeles por byte, bottom-up
-    uint8_t pad[3] = {0,0,0};
+    u8 pad[3] = {0,0,0};
     for (int y = height - 1; y >= 0; y--) {
         int offset = y * width;
         int x = 0;
         for (; x < width; x += 2) {
-            uint8_t p1 = surface[offset + x] & 0x0F;
-            uint8_t p2 = 0;
+            u8 p1 = surface[offset + x] & 0x0F;
+            u8 p2 = 0;
             if (x + 1 < width) p2 = surface[offset + x + 1] & 0x0F;
-            uint8_t byte = (p1 << 4) | p2;
+            u8 byte = (p1 << 4) | p2;
             fwrite(&byte, 1, 1, out);
         }
         int rowBytes = (width + 1) / 2;
@@ -949,11 +949,11 @@ int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
 
     // Leer paleta
     for (int i = 0; i < numColors; i++) {
-        uint8_t entry[4];
+        u8 entry[4];
         fread(entry, 4, 1, in);
-        uint8_t b = entry[0];
-        uint8_t g = entry[1];
-        uint8_t r = entry[2];
+        u8 b = entry[0];
+        u8 g = entry[1];
+        u8 r = entry[2];
         uint16_t c = (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) | 0x8000;
         palette[i] = c;
     }
@@ -966,9 +966,9 @@ int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
         int surfaceY = height - 1 - y;
         fread(&backup[0], 1, bytesPerRow, in);
         for (int x = 0; x < width; x += 2) {//eje horizontal
-            uint8_t byte = ((uint8_t*)backup)[x / 2];
-            uint8_t p1 = (byte >> 4) & 0x0F;
-            uint8_t p2 = byte & 0x0F;
+            u8 byte = ((u8*)backup)[x / 2];
+            u8 p1 = (byte >> 4) & 0x0F;
+            u8 p2 = byte & 0x0F;
             surface[surfaceY * newW + x] = p1;
             if (x + 1 < newW) surface[surfaceY * newW + x + 1] = p2;
         }
@@ -1247,14 +1247,15 @@ int exportTGA(const char* path, u16* surface, int width, int height) {
 #define ACScolModeGrayScale4 4
 #define ACStotalModes 5
 
-#define ACSmirror 1
-#define ACSpattern 0
+#define ACSmirror 01
+#define ACSpattern 00
+#define ACSrepeat 1
 //función auxiliar
-inline void readCommand7(uint8_t byte, int* pInd, u16* surface){
+inline void readCommand7(u8 byte, int* pInd, u16* surface){
     //determinar cual es el tipo de comando contra el que estamos tratando
     switch((byte>>5) & 0b011){
         case ACSpattern:{
-            //0CCP PPRR
+            //000P PPRR
             u8 repeat = (byte & 0b11)+1;
             u8 pixels = ((byte>>2) & 0b111)+2;
 
@@ -1274,17 +1275,19 @@ inline void readCommand7(uint8_t byte, int* pInd, u16* surface){
             }
         break;}
 
-        default:{//repetición simple
+        default:{//repetición simple (01xxxxxx)
             //obtener último color
-            u16 col = surface[*pInd];
-            u8 repeat = byte & 0b111111;//no sumamos uno ya que si el byte fuese 0, no sería detectado
+            u16 col = surface[*pInd-1];
+            u8 repeat = (byte & 0b111111)+1;
             for(int i = 0; i<repeat;i++){
                 surface[(*pInd)++] = col;
             }
+            *pInd--;
         break;}
     }
 }
-inline void readCommand8(uint8_t byte, int* pInd, u16* surface){
+
+inline void readCommand8(u8 byte, int* pInd, u16* surface){
     switch(byte>>6){
         case ACSpattern:{//repeat pattern
             //CCP PPRRR
@@ -1301,24 +1304,24 @@ inline void readCommand8(uint8_t byte, int* pInd, u16* surface){
         case ACSmirror:{//Mirror
             //debemos leer para atrás y escribirlo hacia adelante
             int mInd = *pInd-1;
-            u8 repeat = (byte & 0b1111111)+2;
+            u8 repeat = (byte & 0b111111)+2;
             for(int i = 0; i < repeat; i++){
                 surface[(*pInd)++] = surface[mInd--];
             }
         break;}
 
         default:{//repetición simple, caso 10 u 11
-            //obtener último color
-            u16 col = surface[*pInd];
-            u8 repeat = (byte & 0b1111111)+1;//aquí ya sabemos que esto es un comando, sumamos 1
+            //obtener último indice
+            u16 pixel = surface[*pInd-1];
+            u8 repeat = (byte & 0b1111111)+1;
             for(int i = 0; i<repeat;i++){
-                surface[(*pInd)++] = col;
+                surface[(*pInd)++] = pixel;
             }
         break;}
     }
 }
 void importACS(const char* path, u16* surface){
-    uint8_t* data = (uint8_t*)backup;
+    u8* data = (u8*)backup;
 
     // abrir archivo
     FILE* f = fopen(path, "rb");
@@ -1341,11 +1344,12 @@ void importACS(const char* path, u16* surface){
     fread(data, 1, size, f);
     fclose(f);
 
-    //de momento ignoraremos el byte 0
-
+    //comprobar si se ha abierto un archivo válido
+    u8 val = data[0];
+    if(val != 1){return;}//archivo ACS con compresión, modo imagen y versión 0
     int ind = 1;
     int resTable[16] = {0,4,8,16,24,32,48,64,96,128,192,256,320,512,1024,-1};
-    u8 val = data[ind++];
+    val = data[ind++];
     
     int resX = resTable[val>>4];
     int resY = resTable[val & 0xF];
@@ -1427,24 +1431,24 @@ void importACS(const char* path, u16* surface){
         int CommandsCount = (data[ind++]<<8)|data[ind++];
         int Bind = ind;//indice del bytecontrol
         int cInd = ind+ByteCtrlCout;
+        int ctrlPos = 0;
         //la cantidad de pixeles se asume
 
         //FIN DEL HEADER
 
         ind += (ByteCtrlCout+CommandsCount);
         int pInd = 0;//indice de pixel
-
         // --------------------------------- LEER TODOS LOS DATOS DE LOS PIXELES ---------------------------------- |
         switch(bpp){
-            case 8:  // --------------------------- 8 BPP --------------------------------
+            case 3:  // --------------------------- 8 BPP --------------------------------
                 while(pInd < imgRes){
-                    u8 ctrlByte = data[Bind + (pInd>>3)];
-                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;//obtener el bit actual del ctrlByte
+                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
+                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
+                    ctrlPos++;
 
                     if(bit == 0){
                         // leer índice directo
-                        u8 index = data[ind++];
-                        surface[pInd++] = palette[index];
+                        surface[pInd++] = data[ind++];//surface está en modo index
                     }
                     else{//el bit es un comando!
                         readCommand8(data[cInd++], &pInd, surface);//avanzamos uno en el lector de comandos
@@ -1452,10 +1456,11 @@ void importACS(const char* path, u16* surface){
                 }
             break;
 
-            case 4:  // --------------------------- 4 BPP --------------------------------
+            case 2:  // --------------------------- 4 BPP --------------------------------
                 while(pInd < imgRes){
-                    u8 ctrlByte = data[Bind + (pInd>>3)];
-                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;
+                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
+                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
+                    ctrlPos++;
 
                     if(bit == 0){
                         // Leer nibble alto si pInd par, bajo si impar
@@ -1464,7 +1469,7 @@ void importACS(const char* path, u16* surface){
                         if((pInd & 1) == 0) index = raw >> 4;
                         else{ index = raw & 0x0F; ind++; }//si es el nibble bajo, sumamos a ind
 
-                        surface[pInd++] = palette[index];
+                        surface[pInd++] = index;
                     }
                     else{
                         readCommand8(data[cInd++], &pInd, surface);
@@ -1472,16 +1477,17 @@ void importACS(const char* path, u16* surface){
                 }
             break;
 
-            case 2:  // --------------------------- 2 BPP --------------------------------
+            case 1:  // --------------------------- 2 BPP --------------------------------
                 while(pInd < imgRes){
-                    u8 ctrlByte = data[Bind + (pInd>>3)];
-                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;
+                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
+                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
+                    ctrlPos++;
 
                     if(bit == 0){
                         // 4 píxeles por byte
                         int shift = 6 - ((pInd & 3) * 2);
                         u8 index = (data[ind] >> shift) & 3;
-                        surface[pInd++] = palette[index];
+                        surface[pInd++] = index;
                         if((pInd & 3) == 0) ind++;//solo avanzar un index si ya avanzamos un byte
                     }
                     else{
@@ -1490,10 +1496,11 @@ void importACS(const char* path, u16* surface){
                 }
             break;
 
-            case 1:  // --------------------------- 1 BPP --------------------------------
+            case 0:  // --------------------------- 1 BPP --------------------------------
                 while(pInd < imgRes){//sí, también hay compresión aquí aunque por lo general usaría más espacio
-                    u8 ctrlByte = data[Bind + (pInd>>3)];
-                    u8 bit = (ctrlByte >> (7 - (pInd & 7))) & 1;
+                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
+                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
+                    ctrlPos++;
 
                     if(bit == 0){
                         // 8 píxeles por byte
@@ -1507,12 +1514,13 @@ void importACS(const char* path, u16* surface){
                 }
             break;
         }
-        
     }else{// ------------------ LECTOR EN MODO DIRECTO!!111 -------------------
         //forzar al modo 16bits
         paletteBpp = 16;
         switch(colorMode)
         {
+            //ind es el indice de LECTURA DEL BINARIO
+            
             case ACScolModeARGB1555://el mejor modo de todos (en mi opinión)
                 for(int i = 0; i<imgRes; i++){//i siempre representará el indice de pixel en esta parte
                     u8 hi = data[ind++];
@@ -1573,17 +1581,17 @@ void importACS(const char* path, u16* surface){
 }
 
 void exportACS(const char* path, u16* surface){
-    // revisar si la imagen es válida (ajusta rangos según tu editor)
+    // revisar si la imagen es válida (solo aplica a esta app)
     if(surfaceXres < 2 || surfaceXres >= 8){ return; }
     if(surfaceYres < 2 || surfaceYres >= 8){ return; }
-    uint8_t* data = (uint8_t*)backup;
+    u8* data = (u8*)backup;
 
     // -------------------------------------------------------------------
     // ENCABEZADO (3 bytes + 1 de config de paleta)
     // -------------------------------------------------------------------
-    u8 ver         = 0;
-    u8 compression = 0;
-    u8 fType       = 0;
+    u8 ver         = 0;//versión 0
+    u8 compression = 1;//usa compresión
+    u8 fType       = 0;//imagen
 
     // Byte 0
     data[0] = (ver << 4) | (fType << 2) | (compression);
@@ -1601,7 +1609,7 @@ void exportACS(const char* path, u16* surface){
     // CONTADOR DE COLORES
     // usamos data[4 ... 32771] como tabla de colores (32768 bytes)
     // -------------------------------------------------------------------
-    uint8_t* table = &data[4];
+    u8* table = &data[4];
 
     int totalPixels = (1 << surfaceXres) * (1 << surfaceYres);
     int unique = 0;
@@ -1638,8 +1646,6 @@ void exportACS(const char* path, u16* surface){
     printf("\nColor Config: %d",colorConfig);
     u8 bpp = 0; // 1bpp, 2bpp, 4bpp, 8bpp
     if(paletteBpp == 16){
-        // en modo directo no nos importa maxCol como índice,
-        // pero tú estabas usando unique, lo mantengo por compatibilidad
         maxCol = unique;
     }
 
@@ -1665,8 +1671,6 @@ void exportACS(const char* path, u16* surface){
     data[3] = colorCount;
 
     // PALETA (este editor de pixel art solo exporta a dos formatos de manera nativa)
-    printf("\nwrote\n %d colors.",colorCount);
-    printf("\nUsed %d BPPs",bpp);
     if(colorCount > 0){
 
         if(colorConfig == ACScolModeARGB1555){
@@ -1692,40 +1696,21 @@ void exportACS(const char* path, u16* surface){
         printf("\nUsing direct mode");
         // ====================== MODO DIRECTO ============================
         int iPix = 0;
-        u16 lastColor = 0;
+        u16 lastColor = 0x81;//color inválido en ARGB1555
         const int MAXPAT = 9;
         const int MINPAT = 2; 
+        printf("\nLooking for patterns, \nthis will take a time");
         while(iPix < totalPixels){
-
             u16 curr = surface[iPix];
 
             // 1) patrones
-            int bestSize     = 0;
+            /*int bestSize     = 0;
             int isMirrorFlag = 0;
-            int repeatCount  = 1; // TODO: expandir a repeticiones reales
+            int repeatCount  = 0;
 
-            //EXPORTCOMMAND7
-            for(int size = MAXPAT; size >= MINPAT; size--){
-                if(iPix + size*2 > totalPixels) continue;
+            //detección de comandos aún no implementada en encoder
 
-                uint32_t h1 = fastHash(&surface[iPix],         size);
-                uint32_t h2 = fastHash(&surface[iPix + size],  size);
-
-                if(h1 == h2 && isEqual(&surface[iPix], &surface[iPix + size], size)){
-                    bestSize     = size;
-                    isMirrorFlag = 0;
-                    break;
-                }
-
-                uint32_t hr = fastHashRev(&surface[iPix + size], size);
-                if(h1 == hr && isMirror(&surface[iPix], &surface[iPix + size], size)){
-                    bestSize     = size;
-                    isMirrorFlag = 1;
-                    break;
-                }
-            }
-
-            if(bestSize > 0){
+            if(bestSize > 0){// escritura de comandos
                 if(isMirrorFlag == 0){
                     // REPEAT PATTERN: 0CCP PPRR
                     u8 cmd = ACSpattern<<5;
@@ -1746,23 +1731,21 @@ void exportACS(const char* path, u16* surface){
                     iPix += bestSize;
                     continue;
                 }
-            }
+            }*/
 
-            // 2) repetición del color
-            if(iPix > 0 && curr == lastColor){
-                int run = 1;
-                for(int k = iPix+1; k < totalPixels && run < 63; k++){
-                    if(surface[k] == lastColor) run++;
+            // 2) repetición del color (implementado)
+            if(curr == lastColor){//comprueba hacia atrás porque el comando copia color
+                int run = 1;//un pixel repetido
+                for(int k = iPix+1; k < totalPixels && run < 63; k++){//los pixeles que siguen son iguales?
+                    if(surface[k] == lastColor){run++;}//si lo es, añade 1 al contador
                     else break;
                 }
-
-                u8 cmd = (0x40 | (run & 0x3F));
+                u8 cmd = ((0b01<<6) | (run & 0b111111));//escribir comando para command7
                 data[ind++] = cmd;
 
                 iPix += run;//sumarle al indice de pixeles
                 continue;
             }
-
             // 3) pixel directo
             data[ind++] = curr >> 8;
             data[ind++] = curr & 0xFF;
@@ -1784,9 +1767,10 @@ void exportACS(const char* path, u16* surface){
         u8   currentCtrl = 0;
 
         int  iPix        = 0;
-        const int MAXPAT = 16;
+        const int MAXPAT = 9;
         const int MINPAT = 2;
-
+        const int MINMIRROR = 2;
+        const int MAXMIRROR = 31;
         u16 lastRaw   = 0;
         u8  lastIndex = 0;
 
@@ -1801,56 +1785,102 @@ void exportACS(const char* path, u16* surface){
 
             u8 index = surface[iPix] & 0xFF; // surface ya indexada
 
-            // 1) patrones y mirror
-            int bestSize = 0;
-            int isMirror = 0;
-            u8  repeats  = 1; // TODO: expandir repeticiones
+            int bestSize   = 0;   // tamaño del patrón normal
+            int bestRepeat = 0;   // repeticiones encontradas
+            int bestMirror = 0;   // tamaño del mirror (independiente)
+            int mode       = 0;   // 1 = pattern, 2 = mirror, 0 = nada
 
-            for(int size = MAXPAT; size >= MINPAT; size--){
-                if(iPix + size*2 > totalPixels) continue;
+            int maxHist = iPix;   // cantidad de pixeles antes del actual
 
+            //-----------------------------------------------------
+            // 1) DETECCIÓN DE PATRONES NORMALES + REPEATS
+            //-----------------------------------------------------
+            /*for(int size = MAXPAT; size >= MINPAT; size--)
+            {
+                if(size > maxHist) continue;                 // no hay suficientes píxeles atrás
+                if(iPix + size > totalPixels) continue;      // no cabe un bloque actual
+
+                // ¿Bloque anterior == bloque actual?
                 int ok = 1;
                 for(int k = 0; k < size; k++){
-                    u8 a = surface[iPix+k]         & 0xFF;
-                    u8 b = surface[iPix+size+k]    & 0xFF;
+                    u8 a = surface[iPix - size + k] & 0xFF;  // bloque previo
+                    u8 b = surface[iPix + k]        & 0xFF;  // bloque actual
                     if(a != b){ ok = 0; break; }
                 }
-                if(ok){
-                    bestSize = size;
-                    isMirror = 0;
-                    break;
+
+                if(!ok) continue;
+
+                //-----------------------------------------
+                // Encontrado: ahora buscar REPETICIONES
+                //-----------------------------------------
+                int rep = 1;  // ya hay 1 repetición
+                while(1){
+                    int startA = iPix;
+                    int startB = iPix + rep * size;
+
+                    if(startB + size > totalPixels) break;  // no cabe otro bloque
+
+                    int ok2 = 1;
+                    for(int k = 0; k < size; k++){
+                        u8 a = surface[startA + k]       & 0xFF;
+                        u8 b = surface[startB + k]       & 0xFF;
+                        if(a != b){ ok2 = 0; break; }
+                    }
+
+                    if(!ok2) break;
+                    rep++;
                 }
 
-                int m = 1;
-                for(int k = 0; k < size; k++){
-                    u8 a = surface[iPix+k]                & 0xFF;
-                    u8 b = surface[iPix+size+(size-1-k)]  & 0xFF;
-                    if(a != b){ m = 0; break; }
-                }
-                if(m){
-                    bestSize = size;
-                    isMirror = 1;
-                    break;
+                bestSize   = size;
+                bestRepeat = rep;
+                mode       = 1;
+                break;
+            }
+
+            //-----------------------------------------------------
+            // 2) DETECCIÓN DE MIRROR (SOLO SI NO HAY PATRÓN NORMAL)
+            //-----------------------------------------------------
+            if(mode == 0)
+            {
+                for(int size = MAXMIRROR; size >= MINMIRROR; size--)
+                {
+                    if(size > maxHist) continue;                 // no hay suficientes atrás
+                    if(iPix + size > totalPixels) continue;      // no cabe el bloque actual
+
+                    // ¿Coincide bloque actual con los últimos "size" reversados?
+                    int ok = 1;
+                    for(int k = 0; k < size; k++){
+                        u8 a = surface[iPix - 1 - k] & 0xFF;     // leyendo hacia atrás
+                        u8 b = surface[iPix + k]     & 0xFF;     // bloque actual
+                        if(a != b){ ok = 0; break; }
+                    }
+
+                    if(ok){
+                        bestMirror = size;
+                        mode       = 2;
+                        break;
+                    }
                 }
             }
 
-            if(bestSize > 0){//escribir comandos (8)
+            if(mode == 1)
+            {
+                // ======== PATTERN ========
                 currentCtrl |= (1 << (7 - ctrlBit));
 
-                if(isMirror == 0){
-                    // 01PP PRRR
-                    u8 cmd = 0b00000000;
-                    cmd |= (bestSize & 0b111) << 3;
-                    cmd |= (repeats   & 0b111);
-                    cmdBuf[cmdInd++] = cmd;
-                }else{//pattern
-                    // 00PP PPPP
-                    u8 cmd = 0b01000000;
-                    cmd |= (bestSize & 0x3F);
-                    cmdBuf[cmdInd++] = cmd;
-                }
+                // bestSize → PPP, bestRepeat → RRR
+                u8 sizeField   = bestSize - 2;   // size mínimo = 2
+                u8 repeatField = bestRepeat - 1; // decoder suma 1
 
-                iPix += bestSize * 2;
+                u8 cmd = (ACSpattern << 6)
+                    | (sizeField   << 3)
+                    | (repeatField);
+
+                cmdBuf[cmdInd++] = cmd;
+
+                // avanzamos bestSize * bestRepeat
+                iPix += bestSize * bestRepeat;
+
                 lastRaw   = surface[iPix-1] & 0x7FFF;
                 lastIndex = lastRaw & 0xFF;
 
@@ -1858,6 +1888,29 @@ void exportACS(const char* path, u16* surface){
                 continue;
             }
 
+            else if(mode == 2)
+            {
+                // ======== MIRROR ========
+                currentCtrl |= (1 << (7 - ctrlBit));
+
+                // size guardado como (size-2)
+                u8 sizeField = bestMirror - 2;  
+
+                u8 cmd = (ACSmirror << 6)
+                    | (sizeField & 0b111111);
+
+                cmdBuf[cmdInd++] = cmd;
+
+                iPix += bestMirror;
+
+                lastRaw   = surface[iPix-1] & 0x7FFF;
+                lastIndex = lastRaw & 0xFF;
+
+                ctrlBit++;
+                continue;
+            }
+
+            */
             // 2) repetición simple (8)
             if(iPix > 0 && index == lastIndex){
 
@@ -1873,7 +1926,7 @@ void exportACS(const char* path, u16* surface){
 
                 // comando simple: 10 rrrrrr   (run = 1..128 → guardamos run-1)
                 u8 cmd = 0b10000000 | ((run - 1));//en teoría, nunca debe poder tener un valor mayor a 127
-                cmdBuf[cmdInd++] = cmd;
+                cmdBuf[cmdInd++] = cmd; 
 
                 iPix += run;
                 ctrlBit++;
@@ -1909,15 +1962,77 @@ void exportACS(const char* path, u16* surface){
             data[ind++] = ctrlBuf[k];
         }
         printf("\n%d byte controls",ctrlInd);
+
         // 2) comandos
         for(int k = 0; k < cmdInd; k++){
             data[ind++] = cmdBuf[k];
         }
         printf("\n%d Commands",cmdInd);
 
-        // 3) pixeles crudos
-        for(int k = 0; k < pixInd; k++){
-            data[ind++] = pixBuf[k];
+        // 3) pixeles en index
+        switch(bpp){
+
+            case 0: {//1bpp
+                int rep = pixInd>>3;
+                int bitPos = 7;
+                u8 byte = 0;
+
+                for(int k = 0; k < rep; k++){
+                    byte |= (pixBuf[k] & 1) << bitPos;
+                    if(--bitPos < 0){
+                        data[(ind)++] = byte;
+                        bitPos = 7;
+                        byte = 0;
+                    }
+                }
+                if(bitPos != 7)
+                    data[(ind)++] = byte;
+            } break;
+
+            case 1: {//2bpp
+                int rep = pixInd>>2;
+                int bitPos = 6; // 2 bits por pixel
+                u8 byte = 0;
+
+                for(int k = 0; k < rep; k++){
+                    byte |= (pixBuf[k] & 3) << bitPos;
+                    bitPos -= 2;
+
+                    if(bitPos < 0){
+                        data[(ind)++] = byte;
+                        bitPos = 6;
+                        byte = 0;
+                    }
+                }
+                if(bitPos != 6)
+                    data[(ind)++] = byte;
+            } break;
+
+            case 2: {//4bpp
+                int rep = pixInd>>1;
+                int high = 1;
+                u8 byte = 0;
+
+                for(int k = 0; k < rep; k++){
+                    if(high){
+                        byte = (pixBuf[k] & 0xF) << 4;
+                        high = 0;
+                    } else {
+                        byte |= (pixBuf[k] & 0xF);
+                        data[(ind)++] = byte;//escribir byte
+                        high = 1;
+                        byte = 0;
+                    }
+                }
+                if(!high)
+                    data[(ind)++] = byte;
+            } break;
+
+            case 3: // 8bpp
+                for(int k = 0; k < pixInd; k++){
+                    data[ind++] = pixBuf[k];
+                }
+            break;
         }
         printf("\n%d indexed bytes",pixInd);
     }

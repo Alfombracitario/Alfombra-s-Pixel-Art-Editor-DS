@@ -87,6 +87,7 @@ int stackSize = 16384;
 int paletteSize = 256;
 int palettePos = 0;
 int paletteBpp = 8;
+
 int paletteOffset = 0;
 bool nesMode = false;
 u8 palEdit[3];
