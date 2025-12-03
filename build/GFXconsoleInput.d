@@ -1,0 +1,1 @@
+GFXconsoleInput.o: GFXconsoleInput.s
