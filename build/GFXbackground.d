@@ -1,1 +1,0 @@
-GFXbackground.o: GFXbackground.s
