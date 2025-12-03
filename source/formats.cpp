@@ -1282,7 +1282,6 @@ inline void readCommand7(u8 byte, int* pInd, u16* surface){
             for(int i = 0; i<repeat;i++){
                 surface[(*pInd)++] = col;
             }
-            *pInd--;
         break;}
     }
 }
@@ -1432,12 +1431,14 @@ void importACS(const char* path, u16* surface){
         int Bind = ind;//indice del bytecontrol
         int cInd = ind+ByteCtrlCout;
         int ctrlPos = 0;
+        ind += (ByteCtrlCout+CommandsCount);
         //la cantidad de pixeles se asume
 
         //FIN DEL HEADER
-
-        ind += (ByteCtrlCout+CommandsCount);
+        
+        //variables globales
         int pInd = 0;//indice de pixel
+        u8 part = 0;
         // --------------------------------- LEER TODOS LOS DATOS DE LOS PIXELES ---------------------------------- |
         switch(bpp){
             case 3:  // --------------------------- 8 BPP --------------------------------
@@ -1462,13 +1463,14 @@ void importACS(const char* path, u16* surface){
                     u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
                     ctrlPos++;
 
+                    //ind es para leer pixeles desde data
+                    //pInd es para escribir pixeles en surface
                     if(bit == 0){
                         // Leer nibble alto si pInd par, bajo si impar
                         u8 raw = data[ind];
                         u8 index;
-                        if((pInd & 1) == 0) index = raw >> 4;
-                        else{ index = raw & 0x0F; ind++; }//si es el nibble bajo, sumamos a ind
-
+                        if(part == 0){index = raw >> 4; part++;}//hi nibble
+                        else{index = raw & 0x0F; ind++; part = 0;}//lo nibble
                         surface[pInd++] = index;
                     }
                     else{
@@ -1485,10 +1487,10 @@ void importACS(const char* path, u16* surface){
 
                     if(bit == 0){
                         // 4 píxeles por byte
-                        int shift = 6 - ((pInd & 3) * 2);
-                        u8 index = (data[ind] >> shift) & 3;
+                        int shift = 6-(part<<1);part++;
+                        u8 index = (data[ind] >> shift) & 0b11;
                         surface[pInd++] = index;
-                        if((pInd & 3) == 0) ind++;//solo avanzar un index si ya avanzamos un byte
+                        if(shift == 0) ind++;//solo avanzar un index si ya avanzamos un byte
                     }
                     else{
                         readCommand8(data[cInd++], &pInd, surface);
@@ -1504,9 +1506,10 @@ void importACS(const char* path, u16* surface){
 
                     if(bit == 0){
                         // 8 píxeles por byte
-                        u8 index = (data[ind] >> (7 - (pInd & 7))) & 1;
-                        surface[pInd++] = palette[index];
-                        if((pInd & 7) == 0) ind++;
+                        int shift = 7-(part);part++;
+                        u8 index = (data[ind] >> shift) & 1;
+                        surface[pInd++] = index;
+                        if(shift == 0) ind++;//solo avanzar un index si ya avanzamos un byte
                     }
                     else{
                         readCommand8(data[cInd++], &pInd, surface);
@@ -1517,28 +1520,28 @@ void importACS(const char* path, u16* surface){
     }else{// ------------------ LECTOR EN MODO DIRECTO!!111 -------------------
         //forzar al modo 16bits
         paletteBpp = 16;
+        int pInd = 0;
         switch(colorMode)
         {
             //ind es el indice de LECTURA DEL BINARIO
-            
             case ACScolModeARGB1555://el mejor modo de todos (en mi opinión)
-                for(int i = 0; i<imgRes; i++){//i siempre representará el indice de pixel en esta parte
+                while(pInd < imgRes){//i siempre representará el indice de pixel en esta parte
                     u8 hi = data[ind++];
                     u8 lo = data[ind++];
                     if(hi < 0x80){//puede ser un comando! (no tiene alpha)
                         if((hi|lo) != 0){//es un comando!
-                            readCommand7(hi, &i, surface);
+                            readCommand7(hi, &pInd, surface);
                             //este modo usa 2 bytes, ahora tenemos un byte impar
                             //hay que repetir el proceso, pero haciendo un crimen: retrocedemos un ind
                             ind--; continue;
                         }
                         else{//es un pixel transparente!
-                            surface[i] = 0;
+                            surface[pInd++] = 0;
                             continue;
                         }
                     }
                     //si no era ni transparente ni comando, escribimos el color
-                    surface[i] = (hi<<8)|lo;
+                    surface[pInd++] = (hi<<8)|lo;
                 }
             break;
 
@@ -1568,11 +1571,39 @@ void importACS(const char* path, u16* surface){
 
 
             //estos casos tienen un comportamiento raro, usando control bytes pero su lectura es direct color.
-            case ACScolModeGrayScale4:
-            break;
+            case ACScolModeGrayScale4:{
+                //primero creamos la paleta de GrayScale4
+                for(int i = 0; i < 16; i++){
+                    palette[i] = 0x8000|(i<<11)|(1<<6)|(1<<1);
+                }
+                //luego asignamos los offsets para el correcto funcionamiento
+                
+                //luego usamos el mismo código de read indexed 4bpp
+            break;}
 
-            case ACScolModeGrayScale8:
-            break;
+            case ACScolModeGrayScale8:{
+                //primero creamos la paleta de GrayScale4
+                for(int i = 0; i < 32; i++){
+                    palette[i] = 0x8000|(i<<10)|(i<<5)|i;
+                }
+                //offsets
+                int ByteCtrlCout = (data[ind++]<<8)|data[ind++];
+                int CommandsCount = (data[ind++]<<8)|data[ind++];
+                int Bind = ind;//indice del bytecontrol
+                int cInd = ind+ByteCtrlCout;
+                int ctrlPos = 0;
+                ind += (ByteCtrlCout+CommandsCount);
+                //código
+                while(pInd < imgRes){
+                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
+                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
+                    ctrlPos++;
+                    if(bit == 0){
+                        //la surface tecnicamente está en modo index
+                        surface[pInd++] = data[ind++]>>3;
+                    }else{readCommand8(data[cInd++], &pInd, surface);}
+                }
+            break;}
 
             case ACScolModeRGB888:
             break;
@@ -1736,17 +1767,17 @@ void exportACS(const char* path, u16* surface){
             // 2) repetición del color (implementado)
             if(curr == lastColor){//comprueba hacia atrás porque el comando copia color
                 int run = 1;//un pixel repetido
-                for(int k = iPix+1; k < totalPixels && run < 63; k++){//los pixeles que siguen son iguales?
-                    if(surface[k] == lastColor){run++;}//si lo es, añade 1 al contador
+                while(iPix + run < totalPixels && run < 64){
+                    if(surface[iPix+run] == lastColor) run++;
                     else break;
                 }
-                u8 cmd = ((0b01<<6) | (run & 0b111111));//escribir comando para command7
+                u8 cmd = (0b01000000 | ((run-1) & 0b111111));//nunca debería ser mayor a 63
                 data[ind++] = cmd;
 
                 iPix += run;//sumarle al indice de pixeles
                 continue;
             }
-            // 3) pixel directo
+            // 3) pixel directo ARGB1555
             data[ind++] = curr >> 8;
             data[ind++] = curr & 0xFF;
 
@@ -1783,7 +1814,7 @@ void exportACS(const char* path, u16* surface){
                 ctrlBit = 0;
             }
 
-            u8 index = surface[iPix] & 0xFF; // surface ya indexada
+            u8 index = surface[iPix]; // surface ya indexada
 
             int bestSize   = 0;   // tamaño del patrón normal
             int bestRepeat = 0;   // repeticiones encontradas
@@ -1911,12 +1942,12 @@ void exportACS(const char* path, u16* surface){
             }
 
             */
-            // 2) repetición simple (8)
+            // 2) repetición simple (command8)
             if(iPix > 0 && index == lastIndex){
 
                 int run = 1;
                 while(iPix + run < totalPixels && run < 128){
-                    u8 nxt = (surface[iPix+run] & 0x7FFF) & 0xFF;
+                    u8 nxt = surface[iPix+run];//es un indice, se trunca solo
                     if(nxt == lastIndex) run++;
                     else break;
                 }
@@ -1924,7 +1955,6 @@ void exportACS(const char* path, u16* surface){
                 // marcar comando en byte-control (bit más significativo primero)
                 currentCtrl |= (1 << (7 - ctrlBit));
 
-                // comando simple: 10 rrrrrr   (run = 1..128 → guardamos run-1)
                 u8 cmd = 0b10000000 | ((run - 1));//en teoría, nunca debe poder tener un valor mayor a 127
                 cmdBuf[cmdInd++] = cmd; 
 
@@ -1973,59 +2003,56 @@ void exportACS(const char* path, u16* surface){
         switch(bpp){
 
             case 0: {//1bpp
-                int rep = pixInd>>3;
                 int bitPos = 7;
                 u8 byte = 0;
 
-                for(int k = 0; k < rep; k++){
+                for(int k = 0; k < pixInd; k++){
                     byte |= (pixBuf[k] & 1) << bitPos;
                     if(--bitPos < 0){
-                        data[(ind)++] = byte;
+                        data[ind++] = byte;
                         bitPos = 7;
                         byte = 0;
                     }
                 }
                 if(bitPos != 7)
-                    data[(ind)++] = byte;
+                    data[ind++] = byte;
             } break;
 
             case 1: {//2bpp
-                int rep = pixInd>>2;
                 int bitPos = 6; // 2 bits por pixel
                 u8 byte = 0;
 
-                for(int k = 0; k < rep; k++){
+                for(int k = 0; k < pixInd; k++){
                     byte |= (pixBuf[k] & 3) << bitPos;
                     bitPos -= 2;
 
                     if(bitPos < 0){
-                        data[(ind)++] = byte;
+                        data[ind++] = byte;
                         bitPos = 6;
                         byte = 0;
                     }
                 }
                 if(bitPos != 6)
-                    data[(ind)++] = byte;
+                    data[ind++] = byte;
             } break;
 
             case 2: {//4bpp
-                int rep = pixInd>>1;
                 int high = 1;
                 u8 byte = 0;
 
-                for(int k = 0; k < rep; k++){
+                for(int k = 0; k < pixInd; k++){
                     if(high){
                         byte = (pixBuf[k] & 0xF) << 4;
                         high = 0;
                     } else {
                         byte |= (pixBuf[k] & 0xF);
-                        data[(ind)++] = byte;//escribir byte
+                        data[ind++] = byte;//escribir byte
                         high = 1;
                         byte = 0;
                     }
                 }
                 if(!high)
-                    data[(ind)++] = byte;
+                    data[ind++] = byte;//terminar de escribir byte
             } break;
 
             case 3: // 8bpp

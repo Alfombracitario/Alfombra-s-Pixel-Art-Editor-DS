@@ -11,6 +11,7 @@
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 static u16* gfx = SPRITE_GFX;
+
 void clearVRAM() {
     dmaFillWords(0, (void*)0x06800000, 128 * 1024);
     dmaFillWords(0, (void*)0x06820000, 128 * 1024);
@@ -51,6 +52,7 @@ void drawStars() {
     }
 }
 void intro() {
+    swiWaitForVBlank();
     clearVRAM();
     mmInitDefaultMem((mm_addr)soundbank_bin);
     mmLoad(MOD_INTRO);
