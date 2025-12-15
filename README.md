@@ -1,6 +1,8 @@
-# Nintendo DS Pixel Art Editor
+# A-Pix DS
+<img width="75" height="75" alt="apixdsicon" src="https://github.com/user-attachments/assets/42b970ba-c9fe-478c-bf4c-873eacf6d411" />
 
 This is a pixel art editor developed specifically for the **Nintendo DS**.
+
 
 The application is designed and tested to run on **original Nintendo DS hardware**. Emulator compatibility is **not guaranteed**, and emulator-specific issues are not a priority for this project.
 
@@ -34,3 +36,5 @@ This format is currently **experimental**. While it is optimized for performance
 ## 3. Why is .gif not supported?
 
 .gif is not supported yet because this version is just a prototype and adding it would take a lot of time.
+
+<img width="256" height="384" alt="A-PixDS screenshot" src="https://github.com/user-attachments/assets/67042a94-b95d-416d-bcdb-9fb9232637dc" />
