@@ -15,12 +15,12 @@ This document describes the editor controls and the custom image format used by 
 ### General Controls
 - **A** — Zoom in  
 - **B** — Zoom out  
-- **Y** or **L** — Enable / disable grid  
+- **Y** or **R** — Enable / disable grid  
 - **START** — Return to bitmap mode and **confirm changes**  
 - **SELECT** — Return to bitmap mode and **cancel changes**
 
 ### Navigation
-- **R** or **X** + **D-Pad** — Move canvas  
+- **L** or **X** + **D-Pad** — Move canvas  
 - **D-Pad** — Change active palette entry  
 
 ---
