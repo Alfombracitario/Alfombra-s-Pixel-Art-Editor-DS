@@ -924,211 +924,78 @@ void saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
 
 int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     FILE* in = fopen(filename, "rb");
-    if (!in) return 0;
+    if(!in) return 0;
 
     BITMAPFILEHEADER fileHeader;
     BITMAPINFOHEADER infoHeader;
+
     fread(&fileHeader, sizeof(fileHeader), 1, in);
     fread(&infoHeader, sizeof(infoHeader), 1, in);
 
-    if (fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
-    if (infoHeader.biBitCount != 4) { fclose(in); return 0; }
+    if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
+    if(infoHeader.biBitCount != 4)  { fclose(in); return 0; } // solo 4bpp
 
     int width  = infoHeader.biWidth;
     int height = infoHeader.biHeight;
     int numColors = infoHeader.biClrUsed ? infoHeader.biClrUsed : 16;
 
-    // Redondear a potencias de 2
+    // ===================== Calcular surfaceXres y surfaceYres =====================
     int newW = 1, newH = 1;
-    while (newW < width) newW <<= 1;
-    while (newH < height) newH <<= 1;
-    if (newW > 128) newW = 128;
-    if (newH > 128) newH = 128;
-    surfaceXres = (int)(log2(newW));
-    surfaceYres = (int)(log2(newH));
+    int expW = 0, expH = 0;
 
-    // Leer paleta
-    for (int i = 0; i < numColors; i++) {
+    while(newW < width  && expW < 7) { newW <<= 1; expW++; }
+    while(newH < height && expH < 7) { newH <<= 1; expH++; }
+
+    surfaceXres = expW;
+    surfaceYres = expH;
+
+    int paddedW = 1 << surfaceXres;
+    int paddedH = 1 << surfaceYres;
+
+    // ===================== Leer paleta (BGRA → ARGB1555) =====================
+    for(int i = 0; i < numColors; i++) {
         u8 entry[4];
         fread(entry, 4, 1, in);
         u8 b = entry[0];
         u8 g = entry[1];
         u8 r = entry[2];
-        uint16_t c = (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) | 0x8000;
-        palette[i] = c;
+        palette[i] = (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10) | 0x8000;
     }
 
-    // Leer píxeles
+    // ===================== Leer pixeles =====================
     fseek(in, fileHeader.bfOffBits, SEEK_SET);
-    int bytesPerRow = ((width + 1) / 2 + 3) & ~3;
 
-    for (int y = 0; y >= height; y--) {//eje vertical
-        int surfaceY = height - 1 - y;
-        fread(&backup[0], 1, bytesPerRow, in);
-        for (int x = 0; x < width; x += 2) {//eje horizontal
-            u8 byte = ((u8*)backup)[x / 2];
-            u8 p1 = (byte >> 4) & 0x0F;
-            u8 p2 = byte & 0x0F;
-            surface[surfaceY * newW + x] = p1;
-            if (x + 1 < newW) surface[surfaceY * newW + x + 1] = p2;
+    // Bytes por fila (alineado a 4 bytes)
+    int rowBytes = ((width + 1) / 2 + 3) & ~3;
+
+    for(int y = 0; y < paddedH; y++) {
+        for(int x = 0; x < paddedW; x++) {
+            u8 idx = 0;
+
+            if(y < height && x < width) {
+                int bmpY = height - 1 - y;
+                int byteOffset = fileHeader.bfOffBits
+                    + bmpY * rowBytes
+                    + (x >> 1);
+
+                fseek(in, byteOffset, SEEK_SET);
+
+                u8 byte;
+                fread(&byte, 1, 1, in);
+
+                if(x & 1)
+                    idx = byte & 0x0F;        // nibble bajo
+                else
+                    idx = (byte >> 4) & 0x0F; // nibble alto
+            }
+
+            surface[y * paddedW + x] = idx;
         }
     }
 
     fclose(in);
     return 1;
 }
-
-//gif
-// --- Estructuras básicas del GIF ---
-typedef struct {
-    char signature[3]; // "GIF"
-    char version[3];   // "89a" o "87a"
-    u16 width;
-    u16 height;
-    u8 flags;
-    u8 bgColorIndex;
-    u8 aspect;
-} GIFHeader;
-
-typedef struct {
-    u8 separator; // 0x2C
-    u16 left;
-    u16 top;
-    u16 width;
-    u16 height;
-    u8 flags;
-} GIFImageDescriptor;
-
-// --- Función para leer GIF ---
-int importGIF(const char* path, u16* surface) {
-    FILE* f = fopen(path, "rb");
-    if(!f) return 0;
-
-    GIFHeader header;
-    fread(&header, sizeof(GIFHeader), 1, f);
-    if(strncmp(header.signature, "GIF", 3) != 0) { fclose(f); return 0; }
-
-    bool hasGlobalPalette = header.flags & 0x80;
-    int globalPaletteSize = 2 << (header.flags & 0x07);
-    if(hasGlobalPalette) {
-        for(int i = 0; i < globalPaletteSize && i < 256; i++) {
-            u8 rgb[3];
-            fread(rgb, 1, 3, f);
-            int r = rgb[0] >> 3;
-            int g = rgb[1] >> 3;
-            int b = rgb[2] >> 3;
-            palette[i] = 0x8000 | (r) | (g << 5) | (b << 10);
-        }
-    }
-
-    // buscar descriptor de imagen
-    GIFImageDescriptor imgDesc;
-    while(1) {
-        u8 block = fgetc(f);
-        if(block == 0x2C) { // descriptor de imagen
-            fread(&imgDesc, sizeof(GIFImageDescriptor), 1, f);
-            break;
-        }
-        else if(block == 0x21) { // extensión
-            fgetc(f); // tipo
-            u8 size;
-            while((size = fgetc(f)) != 0) fseek(f, size, SEEK_CUR);
-        }
-        else if(block == 0x3B) { // fin del archivo
-            fclose(f);
-            return 0;
-        }
-    }
-
-    // leer LZW min code size (lo ignoramos en versión sin compresión)
-    u8 lzwMinCodeSize = fgetc(f);
-
-    // leer datos hasta el bloque de fin
-    u8 size;
-    int offset = 0;
-    while((size = fgetc(f)) != 0) {
-        fread(&backup[offset], 1, size, f);
-        offset += size;
-    }
-
-    // los píxeles se copian directamente como índices
-    int w = imgDesc.width;
-    int h = imgDesc.height;
-    for(int y = 0; y < h && y < 128; y++) {
-        for(int x = 0; x < w && x < 128; x++) {
-            int idx = backup[y * w + x] & 0xFF;
-            surface[y * 128 + x] = palette[idx];
-        }
-    }
-
-    fclose(f);
-    return 1;
-}
-
-// --- Exportar GIF simple sin compresión ---
-int exportGIF(const char* path, u16* surface, int width, int height) {
-    FILE* f = fopen(path, "wb");
-    if(!f) return 0;
-
-    // Escribir encabezado
-    fwrite("GIF89a", 1, 6, f);
-
-    // Logical Screen Descriptor
-    fwrite(&width, 2, 1, f);
-    fwrite(&height, 2, 1, f);
-    u8 flags = 0xF7; // global palette 256 colores
-    u8 bgColor = 0;
-    u8 aspect = 0;
-    fwrite(&flags, 1, 1, f);
-    fwrite(&bgColor, 1, 1, f);
-    fwrite(&aspect, 1, 1, f);
-
-    // Paleta global (convertir a RGB888)
-    for(int i = 0; i < 256; i++) {
-        u16 c = palette[i];
-        u8 r = ((c >> 0) & 0x1F) << 3;
-        u8 g = ((c >> 5) & 0x1F) << 3;
-        u8 b = ((c >> 10) & 0x1F) << 3;
-        fputc(r, f); fputc(g, f); fputc(b, f);
-    }
-
-    // Descriptor de imagen
-    fputc(0x2C, f);
-    u16 zero = 0;
-    fwrite(&zero, 2, 1, f); // left
-    fwrite(&zero, 2, 1, f); // top
-    fwrite(&width, 2, 1, f);
-    fwrite(&height, 2, 1, f);
-    u8 noFlags = 0;
-    fwrite(&noFlags, 1, 1, f);
-
-    // Compresión mínima (LZW code size = 8)
-    fputc(8, f);
-
-    // Bloques directos sin compresión (pseudo LZW)
-    int total = width * height;
-    int written = 0;
-    while(written < total) {
-        int chunk = (total - written > 255) ? 255 : (total - written);
-        fputc(chunk, f);
-        for(int i = 0; i < chunk; i++) {
-            // buscar índice de color
-            u16 color = surface[written + i];
-            int idx = 0;
-            for(int p = 0; p < 256; p++) {
-                if(palette[p] == color) { idx = p; break; }
-            }
-            fputc(idx, f);
-        }
-        written += chunk;
-    }
-    fputc(0, f); // fin de datos
-    fputc(0x3B, f); // terminador GIF
-
-    fclose(f);
-    return 1;
-}
-
 //TGA
 // --- Estructura del encabezado TGA ---
 typedef struct {

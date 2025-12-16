@@ -759,8 +759,8 @@ inline int getActionsFromKeys(int keys) {
     if(keys & KEY_DOWN)  actions |= ACTION_DOWN;
     if(keys & KEY_LEFT)  actions |= ACTION_LEFT;
     if(keys & KEY_RIGHT) actions |= ACTION_RIGHT;
-    if(keys & KEY_Y)     actions |= ACTION_ZOOM_IN;
-    if(keys & KEY_X)     actions |= ACTION_ZOOM_OUT;
+    if(keys & KEY_A)     actions |= ACTION_ZOOM_IN;
+    if(keys & KEY_B)     actions |= ACTION_ZOOM_OUT;
 
     return actions;
 }
@@ -1602,11 +1602,11 @@ int main(void) {
                             break;
 
                             case 1://Xres
-                                resX = x>>5;
+                                if(x > 64){resX = x>>5;}
                             break;
 
                             case 2://Yres
-                                resY = x>>5;
+                                if(x > 64){resY = x>>5;}
                             break;
                         }
                         
@@ -1660,7 +1660,6 @@ int main(void) {
                                     exportPal(tempPath);
                                 break;
                                 case 9://Gif
-                                    exportGIF(tempPath,surface,1<<surfaceXres,1<<surfaceYres);
                                 break;
                                 case 10://Tga
                                     exportTGA(tempPath,surface,1<<surfaceXres,1<<surfaceYres);
@@ -1724,7 +1723,6 @@ int main(void) {
                                     importPal(tempPath);
                                 break;
                                 case 9://GIF
-                                    importGIF(tempPath,surface);
                                 break;
                                 case 10://TGA
                                     importTGA(tempPath,surface);
@@ -1757,8 +1755,8 @@ int main(void) {
                         ".bin [SNES]",
                         ".bin [GBA]",
                         ".pcx",
-                        ".pal",
-                        ".gif",
+                        ".pal [YY-CHR]",
+                        ".gif [not supported]",
                         ".tga",
                         ".acs [Custom format]"
                     };
