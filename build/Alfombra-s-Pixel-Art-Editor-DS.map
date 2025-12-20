@@ -4355,66 +4355,66 @@ LOAD C:/devkitPro/devkitARM/bin/../lib/gcc/arm-none-eabi/15.1.0/thumb/crtn.o
  .debug_abbrev  0x00009384       0x28 C:/devkitPro/calico/lib\libcalico_ds9.a(irq_handler.32.o)
  .debug_abbrev  0x000093ac       0x14 C:/devkitPro/calico/lib\libcalico_ds9.a(dldi_stub.o)
 
-.debug_line     0x00000000    0x23feb
+.debug_line     0x00000000    0x23fe9
  *(.debug_line .debug_line.* .debug_line_end)
  .debug_line    0x00000000      0x8d6 avdslib.o
  .debug_line    0x000008d6     0x3d98 formats.o
- .debug_line    0x0000466e      0xf48 intro.o
- .debug_line    0x000055b6     0x4356 main.o
- .debug_line    0x0000990c       0x70 drawSurfaceBottom16x.o
- .debug_line    0x0000997c       0x5e drawSurfaceBottom2x.o
- .debug_line    0x000099da       0x80 drawSurfaceBottom32x.o
- .debug_line    0x00009a5a       0x66 drawSurfaceBottom4x.o
- .debug_line    0x00009ac0       0x6a drawSurfaceBottom8x.o
- .debug_line    0x00009b2a       0x60 memcpy_fast_arm9.o
- .debug_line    0x00009b8a      0x225 C:/devkitPro/libnds/lib\libfat.a(fat_wrappers.o)
- .debug_line    0x00009daf      0x585 C:/devkitPro/libnds/lib\libfat.a(dvm_calico.o)
- .debug_line    0x0000a334      0x2dd C:/devkitPro/libnds/lib\libfat.a(dvm_disc.o)
- .debug_line    0x0000a611      0xa81 C:/devkitPro/libnds/lib\libfat.a(dvm_cache.o)
- .debug_line    0x0000b092      0x4f6 C:/devkitPro/libnds/lib\libfat.a(dvm_volume.o)
- .debug_line    0x0000b588      0x735 C:/devkitPro/libnds/lib\libfat.a(dvm_prober.o)
- .debug_line    0x0000bcbd     0x1930 C:/devkitPro/libnds/lib\libfat.a(fat_driver.o)
- .debug_line    0x0000d5ed     0x62c5 C:/devkitPro/libnds/lib\libfat.a(ff.o)
- .debug_line    0x000138b2      0x2b5 C:/devkitPro/libnds/lib\libfat.a(ffunicode.o)
- .debug_line    0x00013b67      0x61c C:/devkitPro/libnds/lib\libnds9.a(background.o)
- .debug_line    0x00014183     0x1622 C:/devkitPro/libnds/lib\libnds9.a(console.o)
- .debug_line    0x000157a5      0x2df C:/devkitPro/libnds/lib\libnds9.a(decompress.o)
- .debug_line    0x00015a84      0x4ad C:/devkitPro/libnds/lib\libnds9.a(exceptionDefault.o)
- .debug_line    0x00015f31      0x633 C:/devkitPro/libnds/lib\libnds9.a(gurumeditation.o)
- .debug_line    0x00016564      0x457 C:/devkitPro/libnds/lib\libnds9.a(keys.o)
- .debug_line    0x000169bb     0x1c8f C:/devkitPro/libnds/lib\libnds9.a(sprite_alloc.o)
- .debug_line    0x0001864a      0x9a1 C:/devkitPro/libnds/lib\libnds9.a(sprite.o)
- .debug_line    0x00018feb      0x77f C:/devkitPro/libnds/lib\libnds9.a(trig.o)
- .debug_line    0x0001976a       0x8c C:/devkitPro/libnds/lib\libnds9.a(exceptionEntry.o)
- .debug_line    0x000197f6      0xd9e C:/devkitPro/libnds/lib\libmm9.a(mm_comms9.o)
- .debug_line    0x0001a594      0x7af C:/devkitPro/libnds/lib\libmm9.a(mm_loader.o)
- .debug_line    0x0001ad43      0xa69 C:/devkitPro/calico/lib\libcalico_ds9.a(tick.o)
- .debug_line    0x0001b7ac      0xeab C:/devkitPro/calico/lib\libcalico_ds9.a(thread_cold.o)
- .debug_line    0x0001c657     0x1058 C:/devkitPro/calico/lib\libcalico_ds9.a(thread_hot.32.o)
- .debug_line    0x0001d6af      0xdb2 C:/devkitPro/calico/lib\libcalico_ds9.a(dietprint.o)
- .debug_line    0x0001e461      0x765 C:/devkitPro/calico/lib\libcalico_ds9.a(newlib_syscalls.o)
- .debug_line    0x0001ebc6       0x7d C:/devkitPro/calico/lib\libcalico_ds9.a(arm-copy-fill.32.o)
- .debug_line    0x0001ec43       0x69 C:/devkitPro/calico/lib\libcalico_ds9.a(arm-context.32.o)
- .debug_line    0x0001ecac      0x2aa C:/devkitPro/calico/lib\libcalico_ds9.a(arm-shims.32.o)
- .debug_line    0x0001ef56       0xb2 C:/devkitPro/calico/lib\libcalico_ds9.a(arm-cache.32.o)
- .debug_line    0x0001f008      0x3bd C:/devkitPro/calico/lib\libcalico_ds9.a(startup.crt0.o)
- .debug_line    0x0001f3c5       0x7d C:/devkitPro/calico/lib\libcalico_ds9.a(utils.crt0.o)
- .debug_line    0x0001f442      0x127 C:/devkitPro/calico/lib\libcalico_ds9.a(bios.o)
- .debug_line    0x0001f569      0x983 C:/devkitPro/calico/lib\libcalico_ds9.a(pxi.o)
- .debug_line    0x0001feec      0x16f C:/devkitPro/calico/lib\libcalico_ds9.a(keypad.o)
- .debug_line    0x0002005b      0xdf1 C:/devkitPro/calico/lib\libcalico_ds9.a(pm.o)
- .debug_line    0x00020e4c      0x108 C:/devkitPro/calico/lib\libcalico_ds9.a(bootstub_arm9.o)
- .debug_line    0x00020f54       0x6e C:/devkitPro/calico/lib\libcalico_ds9.a(mpu_setup.crt0.o)
- .debug_line    0x00020fc2      0x46b C:/devkitPro/calico/lib\libcalico_ds9.a(sys_startup.o)
- .debug_line    0x0002142d       0x66 C:/devkitPro/calico/lib\libcalico_ds9.a(excpt_handler.32.o)
- .debug_line    0x00021493      0x19d C:/devkitPro/calico/lib\libcalico_ds9.a(touch.o)
- .debug_line    0x00021630      0xe99 C:/devkitPro/calico/lib\libcalico_ds9.a(sound.o)
- .debug_line    0x000224c9      0x630 C:/devkitPro/calico/lib\libcalico_ds9.a(blk.o)
- .debug_line    0x00022af9      0x26e C:/devkitPro/calico/lib\libcalico_ds9.a(irq.o)
- .debug_line    0x00022d67      0xcc4 C:/devkitPro/calico/lib\libcalico_ds9.a(mutex.o)
- .debug_line    0x00023a2b      0x4e3 C:/devkitPro/calico/lib\libcalico_ds9.a(mailbox.o)
- .debug_line    0x00023f0e       0x92 C:/devkitPro/calico/lib\libcalico_ds9.a(irq_handler.32.o)
- .debug_line    0x00023fa0       0x4b C:/devkitPro/calico/lib\libcalico_ds9.a(dldi_stub.o)
+ .debug_line    0x0000466e      0xf46 intro.o
+ .debug_line    0x000055b4     0x4356 main.o
+ .debug_line    0x0000990a       0x70 drawSurfaceBottom16x.o
+ .debug_line    0x0000997a       0x5e drawSurfaceBottom2x.o
+ .debug_line    0x000099d8       0x80 drawSurfaceBottom32x.o
+ .debug_line    0x00009a58       0x66 drawSurfaceBottom4x.o
+ .debug_line    0x00009abe       0x6a drawSurfaceBottom8x.o
+ .debug_line    0x00009b28       0x60 memcpy_fast_arm9.o
+ .debug_line    0x00009b88      0x225 C:/devkitPro/libnds/lib\libfat.a(fat_wrappers.o)
+ .debug_line    0x00009dad      0x585 C:/devkitPro/libnds/lib\libfat.a(dvm_calico.o)
+ .debug_line    0x0000a332      0x2dd C:/devkitPro/libnds/lib\libfat.a(dvm_disc.o)
+ .debug_line    0x0000a60f      0xa81 C:/devkitPro/libnds/lib\libfat.a(dvm_cache.o)
+ .debug_line    0x0000b090      0x4f6 C:/devkitPro/libnds/lib\libfat.a(dvm_volume.o)
+ .debug_line    0x0000b586      0x735 C:/devkitPro/libnds/lib\libfat.a(dvm_prober.o)
+ .debug_line    0x0000bcbb     0x1930 C:/devkitPro/libnds/lib\libfat.a(fat_driver.o)
+ .debug_line    0x0000d5eb     0x62c5 C:/devkitPro/libnds/lib\libfat.a(ff.o)
+ .debug_line    0x000138b0      0x2b5 C:/devkitPro/libnds/lib\libfat.a(ffunicode.o)
+ .debug_line    0x00013b65      0x61c C:/devkitPro/libnds/lib\libnds9.a(background.o)
+ .debug_line    0x00014181     0x1622 C:/devkitPro/libnds/lib\libnds9.a(console.o)
+ .debug_line    0x000157a3      0x2df C:/devkitPro/libnds/lib\libnds9.a(decompress.o)
+ .debug_line    0x00015a82      0x4ad C:/devkitPro/libnds/lib\libnds9.a(exceptionDefault.o)
+ .debug_line    0x00015f2f      0x633 C:/devkitPro/libnds/lib\libnds9.a(gurumeditation.o)
+ .debug_line    0x00016562      0x457 C:/devkitPro/libnds/lib\libnds9.a(keys.o)
+ .debug_line    0x000169b9     0x1c8f C:/devkitPro/libnds/lib\libnds9.a(sprite_alloc.o)
+ .debug_line    0x00018648      0x9a1 C:/devkitPro/libnds/lib\libnds9.a(sprite.o)
+ .debug_line    0x00018fe9      0x77f C:/devkitPro/libnds/lib\libnds9.a(trig.o)
+ .debug_line    0x00019768       0x8c C:/devkitPro/libnds/lib\libnds9.a(exceptionEntry.o)
+ .debug_line    0x000197f4      0xd9e C:/devkitPro/libnds/lib\libmm9.a(mm_comms9.o)
+ .debug_line    0x0001a592      0x7af C:/devkitPro/libnds/lib\libmm9.a(mm_loader.o)
+ .debug_line    0x0001ad41      0xa69 C:/devkitPro/calico/lib\libcalico_ds9.a(tick.o)
+ .debug_line    0x0001b7aa      0xeab C:/devkitPro/calico/lib\libcalico_ds9.a(thread_cold.o)
+ .debug_line    0x0001c655     0x1058 C:/devkitPro/calico/lib\libcalico_ds9.a(thread_hot.32.o)
+ .debug_line    0x0001d6ad      0xdb2 C:/devkitPro/calico/lib\libcalico_ds9.a(dietprint.o)
+ .debug_line    0x0001e45f      0x765 C:/devkitPro/calico/lib\libcalico_ds9.a(newlib_syscalls.o)
+ .debug_line    0x0001ebc4       0x7d C:/devkitPro/calico/lib\libcalico_ds9.a(arm-copy-fill.32.o)
+ .debug_line    0x0001ec41       0x69 C:/devkitPro/calico/lib\libcalico_ds9.a(arm-context.32.o)
+ .debug_line    0x0001ecaa      0x2aa C:/devkitPro/calico/lib\libcalico_ds9.a(arm-shims.32.o)
+ .debug_line    0x0001ef54       0xb2 C:/devkitPro/calico/lib\libcalico_ds9.a(arm-cache.32.o)
+ .debug_line    0x0001f006      0x3bd C:/devkitPro/calico/lib\libcalico_ds9.a(startup.crt0.o)
+ .debug_line    0x0001f3c3       0x7d C:/devkitPro/calico/lib\libcalico_ds9.a(utils.crt0.o)
+ .debug_line    0x0001f440      0x127 C:/devkitPro/calico/lib\libcalico_ds9.a(bios.o)
+ .debug_line    0x0001f567      0x983 C:/devkitPro/calico/lib\libcalico_ds9.a(pxi.o)
+ .debug_line    0x0001feea      0x16f C:/devkitPro/calico/lib\libcalico_ds9.a(keypad.o)
+ .debug_line    0x00020059      0xdf1 C:/devkitPro/calico/lib\libcalico_ds9.a(pm.o)
+ .debug_line    0x00020e4a      0x108 C:/devkitPro/calico/lib\libcalico_ds9.a(bootstub_arm9.o)
+ .debug_line    0x00020f52       0x6e C:/devkitPro/calico/lib\libcalico_ds9.a(mpu_setup.crt0.o)
+ .debug_line    0x00020fc0      0x46b C:/devkitPro/calico/lib\libcalico_ds9.a(sys_startup.o)
+ .debug_line    0x0002142b       0x66 C:/devkitPro/calico/lib\libcalico_ds9.a(excpt_handler.32.o)
+ .debug_line    0x00021491      0x19d C:/devkitPro/calico/lib\libcalico_ds9.a(touch.o)
+ .debug_line    0x0002162e      0xe99 C:/devkitPro/calico/lib\libcalico_ds9.a(sound.o)
+ .debug_line    0x000224c7      0x630 C:/devkitPro/calico/lib\libcalico_ds9.a(blk.o)
+ .debug_line    0x00022af7      0x26e C:/devkitPro/calico/lib\libcalico_ds9.a(irq.o)
+ .debug_line    0x00022d65      0xcc4 C:/devkitPro/calico/lib\libcalico_ds9.a(mutex.o)
+ .debug_line    0x00023a29      0x4e3 C:/devkitPro/calico/lib\libcalico_ds9.a(mailbox.o)
+ .debug_line    0x00023f0c       0x92 C:/devkitPro/calico/lib\libcalico_ds9.a(irq_handler.32.o)
+ .debug_line    0x00023f9e       0x4b C:/devkitPro/calico/lib\libcalico_ds9.a(dldi_stub.o)
 
 .debug_frame    0x00000000     0x37f8
  *(.debug_frame)

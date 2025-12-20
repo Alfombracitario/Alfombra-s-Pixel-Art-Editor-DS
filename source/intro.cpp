@@ -14,6 +14,8 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 static u16* gfx = SPRITE_GFX;
+
+
 void topBackground8() {
     u8* v = (u8*)bgGetGfxPtr(2);
 
