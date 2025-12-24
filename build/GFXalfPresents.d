@@ -1,1 +1,0 @@
-GFXalfPresents.o: GFXalfPresents.s

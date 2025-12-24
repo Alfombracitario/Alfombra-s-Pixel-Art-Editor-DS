@@ -57,7 +57,7 @@ static inline int isEqual(const uint16_t* a, const uint16_t* b, int len){
 int importNES(const char* path, u16* surface) {
     FILE* f = fopen(path, "rb");
     if (!f) {
-        iprintf("File not found %s\n", path);
+        printf("File not found %s\n", path);
         return -1;
     }
 
@@ -68,7 +68,7 @@ int importNES(const char* path, u16* surface) {
 
     if (chrSize > (131072 * 2)) { // 131072 u16 = 262144 bytes
         fclose(f);
-        iprintf("File too large (%d bytes)\n", chrSize);
+        printf("File too large (%d bytes)\n", chrSize);
         return -2;
     }
 
@@ -107,7 +107,7 @@ int importNES(const char* path, u16* surface) {
 int exportNES(const char* path, u16* surface, int height) {
     FILE* f = fopen(path, "wb");
     if (!f) {
-        iprintf("Error: no se pudo crear %s\n", path);
+        printf("Error: no se pudo crear %s\n", path);
         return -1;
     }
 
@@ -388,7 +388,7 @@ int exportGBA(const char* path, u16* surface, int height) {
 int importPal(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) {
-        iprintf("File not found %s\n", path);
+        printf("File not found %s\n", path);
         return -1;
     }
 
@@ -397,7 +397,7 @@ int importPal(const char* path) {
     fseek(f, 0, SEEK_SET);
 
     if (palSize > paletteSize*3) {
-        iprintf("Error: the file is too big\n");
+        printf("Error: the file is too big\n");
         fclose(f);
         return -1;
     }

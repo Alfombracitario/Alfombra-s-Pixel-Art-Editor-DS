@@ -68,6 +68,7 @@ u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
+u8 paletteAlpha = 31;//indicador del alpha actual, útil para 16bpp
 //ideal añadir un array para guardar más frames
 
 touchPosition touch;
@@ -105,6 +106,9 @@ const u16 nesPalette[64] = {
 int imgFormat = 0;
 int prevtpx = 0;
 int prevtpy = 0;
+
+int prevx = 0;
+int prevy = 0;
 
 int mainSurfaceXoffset = 0;
 int mainSurfaceYoffset = 0;
@@ -144,7 +148,6 @@ bool acurrate = false;
 bool both = true;//actualizar ambas pantallas
 bool mayus = false;
 int holdTimer = 0;
-int lastKey = 0;
 int gridSkips = 0;
 bool rPressed = false;
 
@@ -279,9 +282,9 @@ void listFiles() {
 
         // Mostrar con selector
         if(start + i == selector)
-            iprintf("> %s\n", displayName);
+            printf("> %s\n", displayName);
         else
-            iprintf("  %s\n", displayName);
+            printf("  %s\n", displayName);
     }
 }
 
@@ -373,6 +376,43 @@ inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfa
     while (1) {
         // pinta un pixel en surface (índice lineal)
         surface[(y0<<surfaceW) + x0] = color;
+
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+inline u16 mergeColorAlpha(u16 oldCol,u16 color,u8 alpha)
+{
+    u8 r1 = (oldCol>>10) & 31;
+    u8 g1 = (oldCol>>5) & 31;
+    u8 b1 = oldCol & 31;
+
+    u8 r = (color>>10) & 31;//color seleccionado
+    u8 g = (color>>5) & 31;
+    u8 b = color & 31;
+
+    //mezclar con alpha
+    int r2 = ((r * alpha + r1 * (31 - alpha)) /31) & 31;//color nuevo
+    int g2 = ((g * alpha + g1 * (31 - alpha)) /31) & 31;
+    int b2 = ((b * alpha + b1 * (31 - alpha)) /31) & 31;
+
+    u16 finalCol = (r2<<10)|(g2<<5)|(b2)|0x8000;
+    return finalCol;
+}
+
+inline void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
+    int dx = abs(x1 - x0);
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0);
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    while (1) {
+        // pinta un pixel en surface (índice lineal)
+        surface[(y0<<surfaceW) + x0] = mergeColorAlpha(surface[(y0<<surfaceW) + x0],color,paletteAlpha);
+        
 
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
@@ -665,7 +705,9 @@ void setEditorSprites(){
 
     u16 *gfx32 = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
     dmaCopy(GFXselector24Bitmap, gfx32, 32*32*2);
-
+    //u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
+    //dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
+    
             oamSet(&oamSub, 0,
             0, 16,
             0,
@@ -705,7 +747,7 @@ inline void textMode()
     videoSetMode(MODE_0_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
-    iprintf("Press any key\nor touch the screen \nto update the text console.");
+    printf("Press any key\nor touch the screen \nto update the text console.");
     oamClear(&oamSub, 0, 128);
     sleepingFrames = 1;
     sleepTimer = 60;
@@ -813,7 +855,7 @@ void applyActions(int actions) {//acciones compartidas entre teclas y touch
     // --- Limitar dentro de la superficie ---
     blockSize = (1 << surfaceXres) >> subSurfaceZoom;
     int maxX      = (1 << surfaceXres) - blockSize;         // límite máximo en X
-    int maxY      = (1 << surfaceXres) - blockSize;         // límite máximo en Y
+    int maxY      = (1 << surfaceYres) - blockSize;         // límite máximo en Y
     if(subSurfaceXoffset < 0)     subSurfaceXoffset = 0;
     if(subSurfaceYoffset < 0)     subSurfaceYoffset = 0;
     if(subSurfaceXoffset > maxX)  subSurfaceXoffset = maxX;
@@ -919,6 +961,10 @@ void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres,
 
 
 void applyTool(int x, int y, bool dragging) {
+    if(x == prevx && y == prevy){return;}
+    prevx = x;
+    prevy = y;
+
     u16 color = 0;
     if(paletteBpp != 16){
         color = palettePos - paletteOffset;
@@ -928,14 +974,35 @@ void applyTool(int x, int y, bool dragging) {
         color = palette[palettePos];
         color = color |0x8000; //forzar alpha
     }
+
+
     switch (currentTool) {
         case TOOL_BRUSH:
             if (dragging) {
+                if(paletteAlpha != 31){
+                    if(paletteAlpha == 0){
+                        drawLineSurface(prevtpx, prevtpy, x, y, 0, surfaceXres);
+                        break;
+                    }
+                    drawLineSurfaceAlpha(prevtpx, prevtpy, x, y, color, surfaceXres);
+                    break;
+                }
                 drawLineSurface(prevtpx, prevtpy, x, y, color, surfaceXres);
             } else {
+                if(paletteAlpha != 31){
+                    if(paletteAlpha == 0){
+                        surface[(y << surfaceXres) + x] = 0;
+                        break;
+                    }
+                    surface[(y << surfaceXres) + x] = mergeColorAlpha(surface[(y << surfaceXres) + x],color,paletteAlpha);
+                    break;
+                }
+                //modo normal
                 surface[(y << surfaceXres) + x] = color;
             }
             break;
+
+
 
         case TOOL_ERASER:
             if (dragging) {
@@ -944,6 +1011,8 @@ void applyTool(int x, int y, bool dragging) {
                 surface[(y << surfaceXres) + x] = 0;
             }
             break;
+
+
 
         case TOOL_PICKER:
             if(paletteBpp == 16){
@@ -956,8 +1025,20 @@ void applyTool(int x, int y, bool dragging) {
             oamSetXY(&oamSub,0,0,16);
             break;
 
+
         case TOOL_BUCKET:
-            floodFill(surface, x, y, surface[(y << surfaceXres) + x], color, surfaceXres, surfaceYres);
+            if(paletteAlpha != 31){
+                if(paletteAlpha == 0){
+                    floodFill(surface, x, y, surface[(y << surfaceXres) + x], 0, surfaceXres, surfaceYres);
+                    break;
+                }
+                u16 _col = mergeColorAlpha(surface[(y << surfaceXres) + x], color, paletteAlpha);
+                floodFill(surface, x, y, surface[(y << surfaceXres) + x], _col, surfaceXres, surfaceYres);
+                break;
+            }
+            else{
+                floodFill(surface, x, y, surface[(y << surfaceXres) + x], color, surfaceXres, surfaceYres);
+            }
             break;
     }
 }
@@ -1181,10 +1262,8 @@ void updateFPS() {
 }
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
-    initFPS();
-    // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
-    videoSetMode(MODE_0_2D);                // modo texto
-
+    
+    defaultExceptionHandler();// Mostrar crasheos
     // Intentar montar la SD
     bool sd_ok = fatInitDefault();
     if(sd_ok){
@@ -1192,46 +1271,46 @@ int main(void) {
         currentDir = opendir("/");
     }
 
-    // poner pantalla inferior en modo texto temporal
-    videoSetModeSub(MODE_0_2D);
-    vramSetBankC(VRAM_C_SUB_BG);
-    consoleDemoInit();
-
     if (!sd_ok) {
-        iprintf("\x1b[31m\n");//Rojo
+        // --- Inicializar video temporalmente en modo consola (pantalla superior) ---
+        videoSetMode(MODE_0_2D);                // modo texto
 
-        iprintf("ERROR: SD CARD NOT INITIATED.\n");
-        iprintf("\x1b[38m\n");//blanco
-        iprintf("You cannot load or save files.\n");
+        // poner pantalla inferior en modo texto temporal
+        videoSetModeSub(MODE_0_2D);
+        vramSetBankC(VRAM_C_SUB_BG);
+        consoleDemoInit();
 
-        iprintf("\nStarting in 3 seconds");
+        printf("\x1b[31m\n");//Rojo
+
+        printf("ERROR: SD CARD NOT INITIATED.\n");
+        printf("\x1b[38m\n");//blanco
+        printf("You cannot load or save files.\n");
+
+        printf("\nStarting in 3 seconds");
         for (int i = 0; i < 3; i++)//cantidad segundos
         {
-            iprintf(".");
+            printf(".");
             for(int j = 0; j < 60; j++)
             {
                 swiWaitForVBlank();
             }
         }
     }
-
-    defaultExceptionHandler();// Mostrar crasheos
-
     //antes de iniciar el programa, mostramos la intro
     intro();
+
     initBitmap();
-
-    //u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
-    //dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
-
-
-
     setEditorSprites();
-
     setBackupVariables();
-
+    initFPS();
+    //aclarar la pantalla
+    for(int i = 0; i < 16; i++)
+    {
+        setBrightness(3, i-15);
+        swiWaitForVBlank();
+    }
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
-    while(pmMainLoop()) {
+    while(1) {
         //inicio del loop (global)
         //input
         scanKeys();
@@ -1243,6 +1322,10 @@ int main(void) {
 
         if(currentSubMode == SUB_BITMAP)
         {
+            if(kUp & KEY_TOUCH){//permitir volver a dibujar en un pixel
+                prevx = -1;
+                prevy = -1;
+            }
             if(kHeld & KEY_L || kHeld & KEY_X)//zoom y offsets
             {
                 actions |= getActionsFromKeys(kDown);
@@ -1280,7 +1363,7 @@ int main(void) {
             if(palettePos < 0){palettePos = 0;}
             //recordar que debo hacer cambios dependiendo del bpp
             if (kHeld & KEY_TOUCH) {
-                if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//apunta a la surface
+                if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//TOUCH EN SURFACE
                     int localX = touch.px - SURFACE_X;
                     int localY = touch.py;
 
@@ -1437,9 +1520,18 @@ int main(void) {
                         stylusPressed = true;
                         goto frameEnd;
                     }
-                    
+                    if(touch.py < 40 && touch.py > 32 && paletteBpp == 16){//transparencia
+                        paletteAlpha = (touch.px-192)>>1;
+
+                        AVdrawRectangle(pixels,192,63,32,8,palette[palettePos]);
+                        //Limpiar el area
+                        AVdrawRectangle(pixels,192+(paletteAlpha<<1),64-(paletteAlpha<<1),32,8,C_BLACK);
+                        updated = true;
+                        goto frameEnd;
+                    }
                     else if(touch.py >= 40 && touch.py < 64)//creador de colores
                     {
+                        //hay mucho código hardcodeado aquí para mejorar el rendimiento
                         if(nesMode){
                             int ystart = 48;
                             int row = (touch.px-192)>>2;
@@ -1455,13 +1547,13 @@ int main(void) {
                             _col = AVinvertColor(_col);
                             AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                             goto frameEnd;
-                        }
-                        else{
+
+                        }else{
                             int index = (touch.py-40)>>3;
                             int amount = (touch.px-192)>>1;
                             palEdit[index] = amount;
-                            //actualizar barra
 
+                            //actualizar barra
                             u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
                             AVdrawRectangle(pixels,192,amount<<1,(index<<3)+40,8,_barCol[index]);
                             //Limpiar el area
@@ -1473,14 +1565,23 @@ int main(void) {
                             _col += palEdit[2]<<10;
                             _col += 32768;//encender pixel
                             palette[palettePos] = _col;
-                            //dibujar en la pantalla
-                            AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                             
-                            drawSurfaceMain(true);
-                            drawSurfaceBottom();//actualizar surface, sí, es necsario
+                            AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
 
-                            //dibujar arriba el nuevo color generado
-                            AVdrawRectangle(pixels,192,64,32,8,_col);
+                            if(paletteBpp != 16){//Solo actualizar en modo index
+                                drawSurfaceMain(true);
+                                drawSurfaceBottom();
+                                //dibujar arriba el nuevo color generado
+                                AVdrawRectangle(pixels,192,64,32,8,_col);
+                            }else{
+                                updated = true;
+                                //color seleccionado/alpha
+                                AVdrawRectangle(pixels,192,63,32,8,_col);
+                                AVdrawRectangle(pixels,192+(paletteAlpha<<1),64-(paletteAlpha<<1),32,8,C_BLACK);
+                                if(palettePos == 0 && showGrid == true){
+                                    drawGrid(AVinvertColor(_col));
+                                }
+                            }
 
                             //dibujar el contorno del color seleccionado
                             _col = AVinvertColor(_col);
@@ -1548,17 +1649,21 @@ int main(void) {
                 {
                     bitmapMode();//simplemente salir de este menú
                 }
+
                 if(currentConsoleMode == MODE_NEWIMAGE)
                 {
                     int bpps[5]={2,4,8,2,16};
                     consoleClear();
-                    iprintf("Create new file:\n");
-                    iprintf("Resolution: %d",1<<resX);
-                    iprintf("x%d",1<<resY);
-                    iprintf("\nColors:%d",1<<selectorA);
+                    printf("Create new file:\n");
+                    printf("Resolution: %d",1<<resX);
+                    printf("x%d",1<<resY);
+                    printf("\nColors:%d",1<<selectorA);
 
                     if(selector == 3){
-                        iprintf("\nNes mode");
+                        printf("\nNes mode");
+                    }
+                    if(selector == 4){
+                        printf("\nDirect color mode");
                     }
 
                     if(kDown & KEY_RIGHT)
@@ -1596,8 +1701,8 @@ int main(void) {
                         switch(option){
 
                             case 0://Colores
-                                selector = ((x-32)/48);
-                                selector = selector % 5;
+                                selector = ((x-8)/48);
+                                selector = MIN(selector,4);
                                 selectorA = bpps[selector];
                             break;
 
@@ -1627,7 +1732,7 @@ int main(void) {
                             switch(selectorA)
                             {
                                 default:
-                                    iprintf("\nNot supported!");
+                                    printf("\nNot supported!");
                                 break;
                                 case 0://bmp direct
                                     saveBMP(tempPath,palette,surface);//Gracias Zhennyak!
@@ -1685,7 +1790,7 @@ int main(void) {
                             switch(selectorA)
                             {
                                 default:
-                                    iprintf("\nNot supported!");
+                                    printf("\nNot supported!");
                                 break;
                                 case 0://bmp directo
                                     loadBMP_direct(tempPath,surface);
@@ -1718,6 +1823,7 @@ int main(void) {
                                 break;
                                 case 7://PCX
                                     importPCX(tempPath,surface);
+                                    paletteBpp = 8;
                                 break;
                                 case 8://PAL
                                     importPal(tempPath);
@@ -1731,10 +1837,11 @@ int main(void) {
                                     importACS(tempPath,surface);
                                 break;
                             }
-                            bitmapMode();
+                            updated = true;
                             drawSurfaceMain(true);drawSurfaceBottom();
                             drawColorPalette();
                             setBackupVariables();
+                            bitmapMode();
                         }
                     }
                     //input general
@@ -1784,7 +1891,7 @@ int main(void) {
                     }
                     if(kDown & KEY_A) {
                         if(selector < 0 || selector >= fileCount) {
-                            iprintf("Error");
+                            printf("Error");
                         } else {
                             if(entryList[selector].d_type == DT_DIR) {
                                 enterFolder(selector);
@@ -1802,10 +1909,10 @@ int main(void) {
                         goBack();
                     }
                     if(redraw){
-                        iprintf(text);//nombre del archivo
-                        iprintf(texts[selectorA]);//extensión + información extra
+                        printf(text);//nombre del archivo
+                        printf(texts[selectorA]);//extensión + información extra
                         //separar para mostrar el explorador
-                        iprintf("\n-------------------------------\n");
+                        printf("\n-------------------------------\n");
                         listFiles();//dibujar información del explorador
                     }
                 }
