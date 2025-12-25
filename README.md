@@ -33,4 +33,8 @@ This format is currently **experimental**. While it is optimized for performance
 
 ---
 
+## 3. Why is .gif not supported?
+
+.gif is not supported yet because this version is just a prototype and adding it would take a lot of time.
+
 <img width="256" height="384" alt="A-PixDS screenshot" src="https://github.com/user-attachments/assets/67042a94-b95d-416d-bcdb-9fb9232637dc" />

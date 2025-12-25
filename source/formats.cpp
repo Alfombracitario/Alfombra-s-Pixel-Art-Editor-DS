@@ -565,46 +565,57 @@ int exportPCX(const char* path, u16* surface, int width, int height) {
 }
 //gracias Zhennyak! (el hizo el código base para convertir a bmp, lo transformé para que sea compatible con el programa)
 void writeBmpHeader(FILE *f) {
-    int xres = 1<<surfaceXres;
-    int yres = 1<<surfaceYres;
+    int xres = 1 << surfaceXres;
+    int yres = 1 << surfaceYres;
 
-    // Cabecera BMP simple 16bpp sin compresión
+    int rowSize   = (xres * 3 + 3) & ~3; // padding a múltiplo de 4
+    int imageSize = rowSize * yres;
+    int fileSize  = 54 + imageSize;
+
     unsigned char header[54] = {
-        'B','M',            // Firma
-        0,0,0,0,            // Tamaño del archivo (se rellena abajo)
-        0,0,0,0,            // Reservado
-        54,0,0,0,           // Offset datos (54 bytes de header)
-        40,0,0,0,           // Tamaño infoheader (40 bytes)
-        xres,0,0,0,          // Ancho
-        yres,0,0,0,          // Alto
-        1,0,                // Planos
-        16,0,               // Bits por pixel
-        3,0,0,0,            // Compresión BI_BITFIELDS (3 = usar masks)
-        0,0,0,0,            // Tamaño de imagen (se puede dejar 0)
-        0,0,0,0,            // Resolución X
-        0,0,0,0,            // Resolución Y
-        0,0,0,0,            // Colores usados
-        0,0,0,0             // Colores importantes
+        'B','M',                 // Firma
+        0,0,0,0,                 // Tamaño archivo
+        0,0,0,0,                 // Reservado
+        54,0,0,0,                // Offset píxeles
+        40,0,0,0,                // Tamaño DIB
+        0,0,0,0,                 // Ancho
+        0,0,0,0,                 // Alto
+        1,0,                     // Planos
+        24,0,                    // Bits por pixel (24bpp)
+        0,0,0,0,                 // BI_RGB
+        0,0,0,0,                 // Tamaño imagen
+        0,0,0,0,                 // Resolución X
+        0,0,0,0,                 // Resolución Y
+        0,0,0,0,                 // Colores usados
+        0,0,0,0                  // Colores importantes
     };
 
-    // Máscaras de color (para 16bpp RGB565)
-    unsigned int masks[3] = {
-        0xF800, // Rojo
-        0x07E0, // Verde
-        0x001F  // Azul
-    };
+    // File size
+    header[2] = fileSize;
+    header[3] = fileSize >> 8;
+    header[4] = fileSize >> 16;
+    header[5] = fileSize >> 24;
 
-    // Calcula tamaño total (header + pixeles)
-    int fileSize = 54 + xres * yres * 2 + 12; // +12 por masks
-    header[2] = (unsigned char)(fileSize);
-    header[3] = (unsigned char)(fileSize >> 8);
-    header[4] = (unsigned char)(fileSize >> 16);
-    header[5] = (unsigned char)(fileSize >> 24);
+    // Width
+    header[18] = xres;
+    header[19] = xres >> 8;
+    header[20] = xres >> 16;
+    header[21] = xres >> 24;
+
+    // Height
+    header[22] = yres;
+    header[23] = yres >> 8;
+    header[24] = yres >> 16;
+    header[25] = yres >> 24;
+
+    // Image size
+    header[34] = imageSize;
+    header[35] = imageSize >> 8;
+    header[36] = imageSize >> 16;
+    header[37] = imageSize >> 24;
 
     fwrite(header, 1, 54, f);
-    fwrite(masks, 4, 3, f); // Escribir las masks
 }
-
 // Guarda BMP usando paleta + surface en 16bpp directo
 void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
     FILE* out = fopen(filename, "wb");
@@ -625,11 +636,10 @@ void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
             u8 b = color & 31;
             u8 g = (color >> 5) & 31;
             u8 r = (color >> 10) & 31;
-            color = (r<<10) | g | (b >>10) | 0x8000;
-            fwrite(&color, 2, 1, out);
+            int col = (b<<19)|(g<<11)|(r<<3);//escribo en RGB888 porque mi lector soporta eso
+            fwrite(&col, 3, 1, out);
         }
     }
-
     fclose(out);
 }
 

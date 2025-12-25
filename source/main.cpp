@@ -7,7 +7,6 @@
     To-Do list:
     Poder cambiar el tamaño o tipo de pincel
     páginas 
-    terminar modo 16bpp
 */
 #include <nds.h>
 #include <stdio.h>
@@ -771,6 +770,7 @@ inline void bitmapMode()
 
     clearTopBitmap();//redibujar el fondo
     setEditorSprites();
+    paletteAlpha = 31;
     submitVRAM(true,true,true);//recuperamos nuestros queridos datos
     if(paletteBpp == 16){
         setOamBG();
@@ -1016,13 +1016,15 @@ void applyTool(int x, int y, bool dragging) {
 
         case TOOL_PICKER:
             if(paletteBpp == 16){
-                updatePal(surface[(y << surfaceXres) + x],&palettePos);
+                palette[palettePos] = surface[(y << surfaceXres) + x];
+                paletteAlpha = 31;
+                updatePal(0,&palettePos);
             }
             else{
                 updatePal(surface[(y << surfaceXres) + x]-color,&palettePos);
             }
-            currentTool = TOOL_BRUSH;//volver a seleccionar el pincel
-            oamSetXY(&oamSub,0,0,16);
+                currentTool = TOOL_BRUSH;//volver a seleccionar el pincel
+                oamSetXY(&oamSub,0,0,16);
             break;
 
 
