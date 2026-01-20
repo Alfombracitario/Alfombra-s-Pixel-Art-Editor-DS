@@ -34,3 +34,8 @@ This format is currently **experimental**. While it is optimized for performance
 ---
 
 <img width="256" height="384" alt="A-PixDS screenshot" src="https://github.com/user-attachments/assets/67042a94-b95d-416d-bcdb-9fb9232637dc" />
+
+---
+
+Disocrd:
+https://discord.gg/stF2G3f4fc
