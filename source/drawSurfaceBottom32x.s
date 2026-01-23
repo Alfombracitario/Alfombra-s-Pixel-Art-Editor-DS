@@ -15,6 +15,7 @@ outer_rows_loop:
     mov     r12, r1          @ r12 = write_ptr (empezamos a escribir desde r1)
 
     mov r6, #4
+    @Loop desarmado para mayor velocidad
 inner_x_loop:
     ldrh    r8, [r5], #2     @ r8 = *src_ptr++; leer u16
     strh    r8, [r12], #2    @ escribir 1ª copia

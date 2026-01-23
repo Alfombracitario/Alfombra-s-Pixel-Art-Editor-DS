@@ -155,7 +155,9 @@ void updateStars(int i) {
 
 
 void intro() {
+    
     setBrightness(3, -16);
+    swiWaitForVBlank();
     irqSet(IRQ_VBLANK, vblank_handler);//configurar HDMA
     irqEnable(IRQ_VBLANK);
 
@@ -295,5 +297,6 @@ void intro() {
     dmaStopSafe(1);
     dmaStopSafe(2);
     irqSet(IRQ_VBLANK, doNothing);
+    soundDisable();
     BG_PALETTE[0] = 0;
 }

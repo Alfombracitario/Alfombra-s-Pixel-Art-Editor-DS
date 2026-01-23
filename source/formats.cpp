@@ -1,9 +1,19 @@
 //gran parte de todo el código que está aquí (no todo) no fué hecho por mi, esto porque simplemente estoy dando soporte a formatos relativamente genéricos (todos menos .acs) y no quería gastar meses programando cada formato
 //por eso mismo, si alguien me ayudó con algún código lo dirá un comentario, si no entonces fué hecho por mi o directamente ChatGPT lol
 //momento vibe coding lmfao
+
+/*
+    To-do list
+    more palettes formats
+    GBA tiled 8bpp
+    finish .acs
+    streaming
+    preview
+*/
 #include <nds.h>
 #include <stdio.h>
 #include <math.h>
+#include "formats.h"
 
 #define min(a,b) ((a)<(b)?(a):(b))
 #define max(a,b) ((a)>(b)?(a):(b))
@@ -16,73 +26,80 @@ extern int surfaceYres;
 extern int paletteSize;
 extern int paletteBpp;
 
-// ============================================================================
-//  Funciones auxiliares (puedes moverlas arriba o hacerlas inline)
-// ============================================================================
+extern int fileOffset;
+extern u32 kDown;
+//funciones auxiliares para formatos retro
+FILE* openFileOffset(const char* path, int* dataSize){
+    const int pageSize = paletteBpp<<11;
+    const int bytesPerRow = (paletteBpp<<7)>>3;
 
-// Hash rápido para fragmentos pequeños
-static inline uint32_t fastHash(const uint16_t* p, int len){
-    uint32_t h = 2166136261u;
-    for(int i=0;i<len;i++){
-        h = (h ^ p[i]) * 16777619u;
-    }
-    return h;
-}
-
-// Hash invertido (para mirror)
-static inline uint32_t fastHashRev(const uint16_t* p, int len){
-    uint32_t h = 2166136261u;
-    for(int i=len-1; i>=0; i--){
-        h = (h ^ p[i]) * 16777619u;
-    }
-    return h;
-}
-
-// Confirmar mirror
-static inline int isMirror(const uint16_t* a, const uint16_t* b, int len){
-    for(int i=0;i<len;i++){
-        if(a[i] != b[len-1-i]) return 0;
-    }
-    return 1;
-}
-
-// Confirmar igual
-static inline int isEqual(const uint16_t* a, const uint16_t* b, int len){
-    for(int i=0;i<len;i++){
-        if(a[i] != b[i]) return 0;
-    }
-    return 1;
-}
-
-int importNES(const char* path, u16* surface) {
-    FILE* f = fopen(path, "rb");
+    FILE* f = fopen(path, "r+b");
     if (!f) {
         printf("File not found %s\n", path);
-        return -1;
+        return NULL;
     }
 
-    // Obtener tamaño del archivo
+    // Tamaño total del archivo
     fseek(f, 0, SEEK_END);
-    int chrSize = ftell(f);
+    int fileSize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (chrSize > (131072 * 2)) { // 131072 u16 = 262144 bytes
+    // Validar offset (ya viene definido desde fuera)
+    if (fileOffset < 0 || fileOffset >= fileSize) {
         fclose(f);
-        printf("File too large (%d bytes)\n", chrSize);
-        return -2;
+        printf("Invalid offset\n");
+        return NULL;
     }
 
-    u8* chrData = (u8*)backup; // usar el buffer ya reservado
-    fread(chrData, 1, chrSize, f);
-    fclose(f);
+    int remainingSize = fileSize - fileOffset;
 
-    // Decodificar los tiles
-    int numTiles = chrSize >> 4;
-    int tilesPerRow = 16; // 16 tiles por fila
+    // Tamaño real a leer
+    *dataSize = remainingSize;
+    if (*dataSize > pageSize) {
+        *dataSize = pageSize;
+    }
+
+    // Filas necesarias (no potencia aún)
+    int rowsNeeded = remainingSize / bytesPerRow;
+    if (remainingSize % bytesPerRow != 0) rowsNeeded++;
+
+    // Calcular exponente mínimo tal que (1<<surfaceYres) >= rowsNeeded
+    surfaceYres = 0;
+    int height = 1;
+    while (height < rowsNeeded && surfaceYres < 7) {
+        height <<= 1;
+        surfaceYres++;
+    }
+
+    surfaceYres = min(surfaceYres, 7);
+    surfaceXres = 7;
+
+    fseek(f, fileOffset, SEEK_SET);
+    return f;
+}
+
+
+int importNES(const char* path, u16* surface) {
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
+
+    // Leer datos
+    u8* chrData = (u8*)backup;
+    fread(chrData, 1, dataSize, f);
+    fclose(f);
+    //limpiar surface
+    memset(surface, 0, 32768);
+
+    // Decodificar tiles
+    int numTiles = dataSize >> 4; // 16 bytes por tile
 
     for (int t = 0; t < numTiles; t++) {
-        int tileX = (t % tilesPerRow) << 3;
-        int tileY = (t / tilesPerRow) << 3;
+        int tileX = (t & 15)<< 3;
+        int tileY = (t>>4)  << 3;
+
+        // Evitar escribir fuera de la surface
+        if (tileY >= 128) break;
 
         const u8* tile = &chrData[t << 4];
 
@@ -92,11 +109,16 @@ int importNES(const char* path, u16* surface) {
 
             for (int col = 0; col < 8; col++) {
                 int bit = 7 - col;
-                u16 pixel = (((plane1 >> bit) & 1) << 1) | ((plane0 >> bit) & 1);
+                u16 pixel =
+                    (((plane1 >> bit) & 1) << 1) |
+                     ((plane0 >> bit) & 1);
 
                 int x = tileX + col;
                 int y = tileY + row;
-                surface[x + (y << 7)] = pixel;
+
+                if (x < 128 && y < 128) {
+                    surface[x + (y << 7)] = pixel;
+                }
             }
         }
     }
@@ -105,21 +127,20 @@ int importNES(const char* path, u16* surface) {
 }
 
 int exportNES(const char* path, u16* surface, int height) {
-    FILE* f = fopen(path, "wb");
-    if (!f) {
-        printf("Error: no se pudo crear %s\n", path);
-        return -1;
-    }
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
 
-    int tilesPerRow = 128 / 8; // 16 tiles
-    int tilesPerCol = height / 8;
+
+    int tilesPerRow = 16;
+    int tilesPerCol = height>>3;
     int numTiles = tilesPerRow * tilesPerCol;
 
     u8 tile[16];
 
     for (int t = 0; t < numTiles; t++) {
-        int tileX = (t % tilesPerRow) * 8;
-        int tileY = (t / tilesPerRow) * 8;
+        int tileX = (t & 15) <<3;
+        int tileY = (t >> 4) <<3;
 
         for (int row = 0; row < 8; row++) {
             u8 plane0 = 0;
@@ -142,23 +163,27 @@ int exportNES(const char* path, u16* surface, int height) {
     }
 
     fclose(f);
-    return numTiles * 16; // bytes escritos
+    return 0;
 }
+
 int importGBC(const char* path, u16* surface) {
-    FILE* file = fopen(path, "rb");
-    if(!file) return -1;
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
 
     // Leer todo a backup (temporal)
-    int size = fread(backup, 1, sizeof(backup), file);
-    fclose(file);
+    int size = fread(backup, 1, sizeof(backup), f);
+    fclose(f);
     if(size <= 0) return -2;
 
-    int numTiles = size / 16;
-    int tilesPerRow = 128 / 8;
+    memset(surface, 0, 32768);
+
+    const int numTiles = size>>4;
+    const int tilesPerRow = 16;
 
     for(int t = 0; t < numTiles; t++) {
-        int tileX = (t % tilesPerRow) * 8;
-        int tileY = (t / tilesPerRow) * 8;
+        int tileX = (t % tilesPerRow)<<3;
+        int tileY = (t>>4)<<3;
         if(tileY >= 128) break; // fuera del canvas
 
         u8* tile = (u8*)&backup[t * 8]; // cada tile = 16 bytes = 8 líneas * 2 bytes
@@ -177,18 +202,20 @@ int importGBC(const char* path, u16* surface) {
 }
 
 int exportGBC(const char* path, u16* surface, int height) {
-    FILE* file = fopen(path, "wb");
-    if(!file) return -1;
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
 
-    int tilesPerRow = 128 / 8;
-    int numTilesY = height / 8;
+
+    int tilesPerRow = 16;
+    int numTilesY = height>>3;
     int totalTiles = tilesPerRow * numTilesY;
 
     u8 tile[16];
 
     for(int t = 0; t < totalTiles; t++) {
-        int tileX = (t % tilesPerRow) * 8;
-        int tileY = (t / tilesPerRow) * 8;
+        int tileX = (t % tilesPerRow)<<3;
+        int tileY = (t / tilesPerRow)<<3;
         for(int y = 0; y < 8; y++) {
             u8 low = 0, high = 0;
             for(int x = 0; x < 8; x++) {
@@ -200,51 +227,43 @@ int exportGBC(const char* path, u16* surface, int height) {
             tile[y * 2] = low;
             tile[y * 2 + 1] = high;
         }
-        fwrite(tile, 1, 16, file);
+        fwrite(tile, 1, 16, f);
     }
 
-    fclose(file);
+    fclose(f);
     return 0;
 }
 
 
 //SNES
 int importSNES(const char* path, u16* surface) {
-    if (!path || !surface) return -1;
-    FILE* f = fopen(path, "rb");
-    if (!f) return -1;
-
-    // obtener tamaño de archivo
-    fseek(f, 0, SEEK_END);
-    long fileSize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (fileSize <= 0) { fclose(f); return -1; }
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
 
     // número de tiles (32 bytes por tile)
-    long numTiles = fileSize / 32;
+    long numTiles = dataSize>>5;
     if (numTiles <= 0) { fclose(f); return -1; }
 
     // límite máximo: 128x128 pix => 16x16 tiles = 256 tiles
     if (numTiles > 256) numTiles = 256;
 
     // leer archivo entero en backup (como bytes)
-    size_t bytesToRead = (size_t)(numTiles * 32);
+    size_t bytesToRead = (size_t)(numTiles<<5);
     size_t bytesRead = fread((u8*)backup, 1, bytesToRead, f);
     fclose(f);
     if (bytesRead != bytesToRead) return -1;
-
+    
     u8* data = (u8*)backup; // trabajar por bytes
 
-    const int tilesPerRow = 16; // 16
     // Limpiar surface por si sobra espacio
-    // (opcional; puedes comentar si no quieres limpiar)
-    for (int i = 0; i < 128*128; ++i) surface[i] = 0;
+    memset(surface, 0, 32768);
 
     // Decodificar tiles
-    for (long t = 0; t < numTiles; ++t) {
-        int tileX = (t % tilesPerRow) * 8;
-        int tileY = (t / tilesPerRow) * 8;
-        size_t base = (size_t)t * 32;
+    for (int t = 0; t < numTiles; ++t) {
+        int tileX = (t & 15) <<3;
+        int tileY = (t >>4 ) <<3;
+        size_t base = (size_t)t<<5;
 
         // cada tile: bytes 0-15 -> bitplanes 0&1 (2bpp chunk)
         //             bytes 16-31 -> bitplanes 2&3 (2bpp chunk)
@@ -269,18 +288,18 @@ int importSNES(const char* path, u16* surface) {
             }
         }
     }
-
-    return (int)numTiles;
+    return 0;
 }
-
 
 int exportSNES(const char* path, u16* surface, int height) {
     if (!path || !surface) return -1;
     if (height <= 0 || height > 128) return -1;
     if (height % 8 != 0) return -1;
 
-    FILE* f = fopen(path, "wb");
-    if (!f) return -1;
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
+
 
     const int tilesPerRow = 16; // 16
     const int tilesHigh = height>>3;
@@ -327,16 +346,19 @@ int exportSNES(const char* path, u16* surface, int height) {
 }
 //GBA
 int importGBA(const char* path, u16* surface) {
-    FILE* file = fopen(path, "rb");
-    if(!file) return -1;
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
 
     // Leer todo el archivo a backup (temporal)
-    int size = fread(backup, 1, sizeof(backup), file);
-    fclose(file);
+    int size = fread(backup, 1, sizeof(backup), f);
+    fclose(f);
     if(size <= 0) return -2;
 
     int numTiles = size / 32;
     int tilesPerRow = 128 / 8;
+
+    memset(surface, 0, 32768);
 
     for(int t = 0; t < numTiles; t++) {
         int tileX = (t % tilesPerRow) * 8;
@@ -359,8 +381,9 @@ int importGBA(const char* path, u16* surface) {
 }
 
 int exportGBA(const char* path, u16* surface, int height) {
-    FILE* file = fopen(path, "wb");
-    if(!file) return -1;
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
 
     int tilesPerRow = 128 / 8;
     int numTilesY = height / 8;
@@ -378,10 +401,10 @@ int exportGBA(const char* path, u16* surface, int height) {
                 tile[y * 4 + bx] = (c1 << 4) | c0;
             }
         }
-        fwrite(tile, 1, 32, file);
+        fwrite(tile, 1, 32, f);
     }
 
-    fclose(file);
+    fclose(f);
     return 0;
 }
 //por más sorprendente e increíble que parezca, yo hice la ingienería inversa y programación de las paletas! (lol)
@@ -453,6 +476,8 @@ int importPCX(const char* path, u16* surface) {
     // Leer cabecera (128 bytes)
     u8 header[128];
     fread(header, 1, 128, f);
+
+    memset(surface, 0, 32768);
 
     int xmin = header[4] | (header[5] << 8);
     int ymin = header[6] | (header[7] << 8);
@@ -701,6 +726,8 @@ int loadBMP_direct(const char* filename, uint16_t* surface) {
     // ===================== Leer pixeles =====================
     fseek(in, fileHeader.bfOffBits, SEEK_SET);
 
+    memset(surface, 0, 32768);
+
     // Cada línea BMP está alineada a múltiplos de 4 bytes
     int bytesPerPixel = bpp / 8;
     int rowSize = ((width * bytesPerPixel + 3) & ~3);
@@ -808,6 +835,8 @@ int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface) 
 
     BITMAPFILEHEADER fileHeader;
     BITMAPINFOHEADER infoHeader;
+
+    memset(surface, 0, 32768);
 
     fread(&fileHeader, sizeof(fileHeader), 1, in);
     fread(&infoHeader, sizeof(infoHeader), 1, in);
@@ -932,6 +961,7 @@ void saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     fclose(out);
 }
 
+
 int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     FILE* in = fopen(filename, "rb");
     if(!in) return 0;
@@ -939,6 +969,8 @@ int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     BITMAPFILEHEADER fileHeader;
     BITMAPINFOHEADER infoHeader;
 
+    memset(surface, 0, 32768);
+    
     fread(&fileHeader, sizeof(fileHeader), 1, in);
     fread(&infoHeader, sizeof(infoHeader), 1, in);
 
@@ -1006,112 +1038,123 @@ int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface) {
     fclose(in);
     return 1;
 }
-//TGA
-// --- Estructura del encabezado TGA ---
-typedef struct {
-    u8  idLength;
-    u8  colorMapType;
-    u8  imageType;
-    u16 colorMapStart;
-    u16 colorMapLength;
-    u8  colorMapDepth;
-    u16 xOrigin;
-    u16 yOrigin;
-    u16 width;
-    u16 height;
-    u8  bpp;
-    u8  descriptor;
-} TGAHeader;
 
-// --- Importar TGA indexado 8bpp ---
-int importTGA(const char* path, u16* surface) {
-    FILE* f = fopen(path, "rb");
-    if(!f) return 0;
+int importSNES8bpp(const char* path, u16* surface) {
+    int dataSize = 0;
+    FILE* f = openFileOffset(path, &dataSize);
+    if (!f) return -1;
 
-    TGAHeader header;
-    fread(&header, sizeof(TGAHeader), 1, f);
+    // 64 bytes por tile
+    long numTiles = dataSize >> 6;
+    if (numTiles <= 0) { fclose(f); return -1; }
 
-    // Verificar tipo (1 = color map, sin compresión)
-    if(header.imageType != 1 || header.bpp != 8 || header.colorMapType != 1) {
-        fclose(f);
-        return 0; // no es un TGA indexado válido
-    }
+    // límite: 16x16 tiles = 256 tiles (128x128 px)
+    if (numTiles > 256) numTiles = 256;
 
-    // Saltar campo ID si existe
-    if(header.idLength > 0)
-        fseek(f, header.idLength, SEEK_CUR);
+    size_t bytesToRead = (size_t)numTiles << 6;
+    size_t bytesRead = fread((u8*)backup, 1, bytesToRead, f);
+    fclose(f);
+    if (bytesRead != bytesToRead) return -1;
 
-    // Leer paleta (hasta 256 colores)
-    int colors = header.colorMapLength;
-    for(int i = 0; i < colors && i < 256; i++) {
-        u8 rgb[3];
-        fread(rgb, 1, 3, f);
-        int r = rgb[2] >> 3; // nota: BGR en TGA
-        int g = rgb[1] >> 3;
-        int b = rgb[0] >> 3;
-        palette[i] = 0x8000 | (r) | (g << 5) | (b << 10);
-    }
+    u8* data = (u8*)backup;
 
-    // Leer pixeles indexados
-    int w = header.width;
-    int h = header.height;
-    int size = w * h;
-    fread(backup, 1, size, f);
+    // limpiar surface
+    memset(surface, 0, 32768);
 
-    // Copiar al surface (limitado a 128x128)
-    for(int y = 0; y < h && y < 128; y++) {
-        for(int x = 0; x < w && x < 128; x++) {
-            u8 index = ((u8*)backup)[(h - 1 - y) * w + x]; // TGA va de abajo hacia arriba
-            surface[y * 128 + x] = palette[index];
+    for (int t = 0; t < numTiles; ++t) {
+        int tileX = (t & 15) << 3;
+        int tileY = (t >> 4) << 3;
+        size_t base = (size_t)t << 6;
+
+        for (int row = 0; row < 8; ++row) {
+            // leer los 8 bitplanes
+            u8 p0 = data[base + row*2 + 0];
+            u8 p1 = data[base + row*2 + 1];
+            u8 p2 = data[base + 16 + row*2 + 0];
+            u8 p3 = data[base + 16 + row*2 + 1];
+            u8 p4 = data[base + 32 + row*2 + 0];
+            u8 p5 = data[base + 32 + row*2 + 1];
+            u8 p6 = data[base + 48 + row*2 + 0];
+            u8 p7 = data[base + 48 + row*2 + 1];
+
+            int dstBase = (tileY + row) * 128 + tileX;
+
+            for (int x = 0; x < 8; ++x) {
+                int bit = 7 - x;
+                u16 v =
+                    ((p0 >> bit) & 1) |
+                    (((p1 >> bit) & 1) << 1) |
+                    (((p2 >> bit) & 1) << 2) |
+                    (((p3 >> bit) & 1) << 3) |
+                    (((p4 >> bit) & 1) << 4) |
+                    (((p5 >> bit) & 1) << 5) |
+                    (((p6 >> bit) & 1) << 6) |
+                    (((p7 >> bit) & 1) << 7);
+
+                surface[dstBase + x] = v; // 0..255
+            }
         }
     }
-
-    fclose(f);
-    return 1;
+    return 0;
 }
 
-// --- Exportar TGA indexado 8bpp sin compresión ---
-int exportTGA(const char* path, u16* surface, int width, int height) {
-    FILE* f = fopen(path, "wb");
-    if(!f) return 0;
+int exportSNES8bpp(const char* path, u16* surface, int height) {
+    if (!path || !surface) return -1;
+    if (height <= 0 || height > 128) return -1;
+    if (height % 8 != 0) return -1;
 
-    TGAHeader header;
-    memset(&header, 0, sizeof(header));
-    header.colorMapType = 1;
-    header.imageType = 1; // uncompressed, color-mapped
-    header.colorMapStart = 0;
-    header.colorMapLength = 256;
-    header.colorMapDepth = 24;
-    header.width = width;
-    header.height = height;
-    header.bpp = 8;
-    header.descriptor = 0x00; // origen inferior izquierdo
+    int dataSize = 0;
+    FILE* f = openFileOffset(path,&dataSize);
+    if(f == NULL){return -1;}
 
-    fwrite(&header, sizeof(TGAHeader), 1, f);
 
-    // Paleta (convertir a BGR888)
-    for(int i = 0; i < 256; i++) {
-        u16 c = palette[i];
-        u8 r = ((c >> 0) & 0x1F) << 3;
-        u8 g = ((c >> 5) & 0x1F) << 3;
-        u8 b = ((c >> 10) & 0x1F) << 3;
-        fputc(b, f); fputc(g, f); fputc(r, f);
-    }
+    const int tilesPerRow = 16;
+    const int tilesHigh = height >> 3;
+    const int numTiles = tilesPerRow * tilesHigh;
+    const size_t bytesToWrite = (size_t)numTiles << 6;
 
-    // Imagen indexada (invertida verticalmente)
-    for(int y = height - 1; y >= 0; y--) {
-        for(int x = 0; x < width; x++) {
-            u16 color = surface[y * 128 + x];
-            int idx = 0;
-            for(int p = 0; p < 256; p++) {
-                if(palette[p] == color) { idx = p; break; }
+    u8* data = (u8*)backup;
+    memset(data, 0, bytesToWrite);
+
+    for (int t = 0; t < numTiles; ++t) {
+        int tileX = (t % tilesPerRow) << 3;
+        int tileY = (t / tilesPerRow) << 3;
+        size_t base = (size_t)t << 6;
+
+        for (int row = 0; row < 8; ++row) {
+            u8 p0=0,p1=0,p2=0,p3=0,p4=0,p5=0,p6=0,p7=0;
+            int srcBase = (tileY + row) * 128 + tileX;
+
+            for (int x = 0; x < 8; ++x) {
+                u16 pix = surface[srcBase + x] & 0xFF;
+                int bit = 7 - x;
+
+                p0 |= ((pix >> 0) & 1) << bit;
+                p1 |= ((pix >> 1) & 1) << bit;
+                p2 |= ((pix >> 2) & 1) << bit;
+                p3 |= ((pix >> 3) & 1) << bit;
+                p4 |= ((pix >> 4) & 1) << bit;
+                p5 |= ((pix >> 5) & 1) << bit;
+                p6 |= ((pix >> 6) & 1) << bit;
+                p7 |= ((pix >> 7) & 1) << bit;
             }
-            fputc(idx, f);
+
+            data[base + row*2 + 0]  = p0;
+            data[base + row*2 + 1]  = p1;
+            data[base + 16 + row*2] = p2;
+            data[base + 16 + row*2 + 1] = p3;
+            data[base + 32 + row*2] = p4;
+            data[base + 32 + row*2 + 1] = p5;
+            data[base + 48 + row*2] = p6;
+            data[base + 48 + row*2 + 1] = p7;
         }
     }
 
+    size_t written = fwrite(data, 1, bytesToWrite, f);
     fclose(f);
-    return 1;
+    if (written != bytesToWrite) return -1;
+
+    return (int)written;
 }
 
 //advertencia, estos importadores y exportadores de ACS están optimizados específicamente para este editor de pixel art,
@@ -1127,6 +1170,45 @@ int exportTGA(const char* path, u16* surface, int width, int height) {
 #define ACSmirror 01
 #define ACSpattern 00
 #define ACSrepeat 1
+
+
+// ============================================================================
+//                      Funciones auxiliares
+// ============================================================================
+
+static inline uint32_t fastHash(const uint16_t* p, int len){
+    uint32_t h = 2166136261u;
+    for(int i=0;i<len;i++){
+        h = (h ^ p[i]) * 16777619u;
+    }
+    return h;
+}
+
+// Hash invertido
+static inline uint32_t fastHashRev(const uint16_t* p, int len){
+    uint32_t h = 2166136261u;
+    for(int i=len-1; i>=0; i--){
+        h = (h ^ p[i]) * 16777619u;
+    }
+    return h;
+}
+
+// Confirmar mirror
+static inline int isMirror(const uint16_t* a, const uint16_t* b, int len){
+    for(int i=0;i<len;i++){
+        if(a[i] != b[len-1-i]) return 0;
+    }
+    return 1;
+}
+
+// Confirmar igual
+static inline int isEqual(const uint16_t* a, const uint16_t* b, int len){
+    for(int i=0;i<len;i++){
+        if(a[i] != b[i]) return 0;
+    }
+    return 1;
+}
+
 //función auxiliar
 inline void readCommand7(u8 byte, int* pInd, u16* surface){
     //determinar cual es el tipo de comando contra el que estamos tratando
@@ -1162,7 +1244,6 @@ inline void readCommand7(u8 byte, int* pInd, u16* surface){
         break;}
     }
 }
-
 inline void readCommand8(u8 byte, int* pInd, u16* surface){
     switch(byte>>6){
         case ACSpattern:{//repeat pattern
@@ -1223,6 +1304,9 @@ void importACS(const char* path, u16* surface){
     //comprobar si se ha abierto un archivo válido
     u8 val = data[0];
     if(val != 1){return;}//archivo ACS con compresión, modo imagen y versión 0
+
+    memset(surface, 0, 32768);
+    
     int ind = 1;
     int resTable[16] = {0,4,8,16,24,32,48,64,96,128,192,256,320,512,1024,-1};
     val = data[ind++];
@@ -1236,6 +1320,10 @@ void importACS(const char* path, u16* surface){
     if(resY == -1){
         resY = (data[ind++]<<8) | data[ind++];
     }
+
+    //aplicar la resolución a la imagen que se está cargando
+    surfaceXres = log2(resX);
+    surfaceYres = log2(resY);
 
     u32 imgRes = resX*resY;
 
@@ -1445,7 +1533,6 @@ void importACS(const char* path, u16* surface){
                     surface[i] = (a<<15)|(r<<10)|(g<<5)|b;
                 }
             break;
-
 
             //estos casos tienen un comportamiento raro, usando control bytes pero su lectura es direct color.
             case ACScolModeGrayScale4:{

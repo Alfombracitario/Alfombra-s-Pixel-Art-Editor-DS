@@ -14,7 +14,7 @@ LIBDIRS		:= $(BLOCKSDS)/libs/maxmod
 # -------------------------------------------------
 NAME            := A-Pix
 GAME_TITLE      := A-Pix DS
-GAME_SUBTITLE   := Pixel Art Editor
+GAME_SUBTITLE   := @Alfombracitario
 
 # -------------------------------------------------
 # Carpetas del proyecto
@@ -34,8 +34,8 @@ USE_MAXMOD      := 1
 # -------------------------------------------------
 # Opciones extra (opcional)
 # -------------------------------------------------
-CFLAGS          += -O2 -Wall
-CXXFLAGS        += -O2 -Wall
+CFLAGS          += -O3 -Wall
+CXXFLAGS        += -O3 -Wall
 DEFINES         += -DARM9
 
 # -------------------------------------------------

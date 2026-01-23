@@ -21,11 +21,8 @@ int exportPCX(const char* path, u16* surface, int width, int height);
 int importPal(const char* path);
 int exportPal(const char* path);
 
-//int importGIF(const char* path, u16* surface);
-//int exportGIF(const char* path, u16* surface, int width, int height);
-
-int importTGA(const char* path, u16* surface);
-int exportTGA(const char* path, u16* surface, int width, int height);
+int importSNES8bpp(const char* path, u16* surface);
+int exportSNES8bpp(const char* path, u16* surface, int height);
 
 void saveBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface);
 int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface);
@@ -33,11 +30,25 @@ int loadBMP_indexed(const char* filename, uint16_t* palette, uint16_t* surface);
 void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface);
 int loadBMP_direct(const char* filename, uint16_t* surface);
 
-int saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface);
+void saveBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface);
 int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface);
 
 //acs
 void exportACS(const char* path, u16* surface);
 void importACS(const char* path, u16* surface);
+
+//macros
+#define formatDirectBMP 0
+#define format8bppBMP 1
+#define format4bppBMP 2
+#define formatNES 3
+#define formatGBC 4
+#define formatSNES4 5
+#define formatGBA4 6
+#define formatPCX 7
+#define formatPAL 8
+#define formatSNES8 9
+#define formatRAW 10
+#define formatACS 11
 
 #endif // FORMATS_H
