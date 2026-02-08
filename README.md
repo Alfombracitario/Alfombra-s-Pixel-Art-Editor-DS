@@ -1,5 +1,6 @@
 # A-Pix DS
-<img width="75" height="75" alt="apixdsicon" src="https://github.com/user-attachments/assets/42b970ba-c9fe-478c-bf4c-873eacf6d411" />
+<img width="1485" height="384" alt="image" src="https://github.com/user-attachments/assets/0de200cb-ea3a-4f0a-9268-c7748b70b55e" />
+
 
 This is a pixel art editor developed specifically for the **Nintendo DS**.
 
