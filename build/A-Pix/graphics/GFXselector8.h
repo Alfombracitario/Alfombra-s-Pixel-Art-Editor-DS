@@ -1,25 +1,25 @@
 
-//{{BLOCK(GFXbackground)
+//{{BLOCK(GFXselector8)
 
 //======================================================================
 //
-//	GFXbackground, 32x32@16, 
+//	GFXselector8, 8x8@16, 
 //	Transparent color : 00,00,00
 //	+ bitmap not compressed
-//	Total size: 2048 = 2048
+//	Total size: 128 = 128
 //
-//	Time-stamp: 2026-02-08, 00:50:51
+//	Time-stamp: 2026-02-08, 00:50:55
 //	Exported by Cearn's GBA Image Transmogrifier, v1.15.7-dirty
 //	( http://www.coranac.com/projects/#grit )
 //
 //======================================================================
 
-#ifndef GRIT_GFXBACKGROUND_H
-#define GRIT_GFXBACKGROUND_H
+#ifndef GRIT_GFXSELECTOR8_H
+#define GRIT_GFXSELECTOR8_H
 
-#define GFXbackgroundBitmapLen 2048
-extern const unsigned int GFXbackgroundBitmap[512];
+#define GFXselector8BitmapLen 128
+extern const unsigned int GFXselector8Bitmap[32];
 
-#endif // GRIT_GFXBACKGROUND_H
+#endif // GRIT_GFXSELECTOR8_H
 
-//}}BLOCK(GFXbackground)
+//}}BLOCK(GFXselector8)

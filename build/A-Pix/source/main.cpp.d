@@ -69,7 +69,9 @@ build/A-Pix/source/main.cpp.o: source/main.cpp \
  build/A-Pix/graphics/GFXselector24.h \
  build/A-Pix/graphics/GFXselector16.h \
  build/A-Pix/graphics/GFXnewImageInput.h \
- build/A-Pix/graphics/GFXbackground.h
+ build/A-Pix/graphics/GFXbackground.h build/A-Pix/graphics/GFXmore.h \
+ build/A-Pix/graphics/GFXbrushSettings.h \
+ build/A-Pix/graphics/GFXselector8.h
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds.h:
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/bios.h:
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/ndstypes.h:
@@ -144,3 +146,6 @@ build/A-Pix/graphics/GFXselector24.h:
 build/A-Pix/graphics/GFXselector16.h:
 build/A-Pix/graphics/GFXnewImageInput.h:
 build/A-Pix/graphics/GFXbackground.h:
+build/A-Pix/graphics/GFXmore.h:
+build/A-Pix/graphics/GFXbrushSettings.h:
+build/A-Pix/graphics/GFXselector8.h:

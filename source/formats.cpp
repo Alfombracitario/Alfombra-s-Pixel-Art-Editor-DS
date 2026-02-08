@@ -44,12 +44,18 @@ FILE* openFileOffset(const char* path, int* dataSize){
     int fileSize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    // Validar offset (ya viene definido desde fuera)
-    if (fileOffset < 0 || fileOffset >= fileSize) {
-        fclose(f);
-        printf("Invalid offset\n");
-        return NULL;
+
+    // offset circular
+    int maxOffset = fileSize - pageSize;
+    if (maxOffset < 0) maxOffset = 0;
+
+    if (fileOffset < 0) {
+        fileOffset = maxOffset;
     }
+    else if (fileOffset > maxOffset) {
+        fileOffset = 0;
+    }
+
 
     int remainingSize = fileSize - fileOffset;
 

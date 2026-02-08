@@ -28,7 +28,9 @@
 #include "GFXselector16.h"
 #include "GFXnewImageInput.h"
 #include "GFXbackground.h"
-
+#include "GFXmore.h"
+#include "GFXbrushSettings.h"
+#include "GFXselector8.h"
 //Macros
 #define SCREEN_W 256
 #define SCREEN_H 256
@@ -51,6 +53,11 @@
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
 #define MAX_ALPHA 63
+
+//OAM
+#define selector24oamID 64
+#define brushSettingsOamId 24
+#define brushSettingsSelectorOamId 22
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 //static PrintConsole bottomConsole;
@@ -151,6 +158,7 @@ int fileOffset = 0;
 int gridSkips = 0;
 bool rPressed = false;
 bool screensSwapped = false;
+bool paletteZoneCleaned = false;
 
 enum {
     ACTION_NONE      = 0,
@@ -171,6 +179,29 @@ typedef enum {
 
 ToolType currentTool = TOOL_BRUSH; // por defecto
 
+typedef enum {
+    BRUSH_MODE_NORMAL = 0,
+    BRUSH_MODE_DITHER,
+    BRUSH_MODE_HLINES,
+    BRUSH_MODE_VLINES,
+} BrushMode;
+
+typedef enum {
+    BRUSH_SIZE_1 = 0,
+    BRUSH_SIZE_2,
+    BRUSH_SIZE_3,
+    BRUSH_SIZE_4
+} BrushSize;
+
+typedef enum {
+    BRUSH_TYPE_RECTANGLE_HOLLOW = 0,
+    BRUSH_TYPE_RECTANGLE_FILLED,
+    BRUSH_TYPE_LINE,
+    BRUSH_TYPE_CIRCLE
+} BrushType;
+
+BrushMode brushMode = BRUSH_MODE_NORMAL;
+BrushSize brushSize = BRUSH_SIZE_1;
 
 
 //archivos
@@ -377,8 +408,113 @@ void submitVRAM(bool full = false, bool _accurate = false, bool both = true)
     }
 }
 
+static inline bool brushPatternPass(int x, int y, BrushMode mode)
+{
+    switch(mode)
+    {
+        case BRUSH_MODE_NORMAL:
+            return true;
 
-inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
+        case BRUSH_MODE_HLINES:
+            return !(y & 1);
+
+        case BRUSH_MODE_VLINES:
+            return !(x & 1);
+
+        case BRUSH_MODE_DITHER:
+            return ((x ^ y) & 1) == 0;
+    }
+
+    return true;
+}
+inline void drawPixelSurface(int x, int y, u16 color)
+{
+    if((unsigned)x < 1<<surfaceXres &&
+       (unsigned)y < 1<<surfaceYres &&
+       brushPatternPass(x, y, brushMode))
+    {
+        surface[(y <<surfaceXres) + x] = color;
+    }
+}
+
+inline void brushStamp2(int x,int y,u16 color)
+{
+    drawPixelSurface(x  ,y  ,color);
+    drawPixelSurface(x+1,y  ,color);
+    drawPixelSurface(x  ,y+1,color);
+    drawPixelSurface(x+1,y+1,color);
+}
+
+inline void brushStamp3Square(int x,int y,u16 color)
+{
+    for(int oy=-1; oy<=1; oy++)
+    for(int ox=-1; ox<=1; ox++)
+        drawPixelSurface(x+ox,y+oy,color);
+}
+
+inline void brushStamp3Circle(int x,int y,u16 color)
+{
+    drawPixelSurface(x  ,y  ,color);
+    drawPixelSurface(x+1,y  ,color);
+    drawPixelSurface(x  ,y+1,color);
+    drawPixelSurface(x-1,y,color);
+    drawPixelSurface(x,y-1,color);
+}
+inline void brushStamp4Circle(int x,int y,u16 color)
+{
+    drawPixelSurface(x+1,y-1 ,color);
+    drawPixelSurface(x  ,y-1 ,color);
+    drawPixelSurface(x-1,y+1 ,color);
+    drawPixelSurface(x-1,y  ,color);
+    drawPixelSurface(x  ,y  ,color);
+    drawPixelSurface(x  ,y+1,color);
+    drawPixelSurface(x  ,y+2,color);
+    drawPixelSurface(x+1,y+1,color);
+    drawPixelSurface(x+1,y+2,color);
+    drawPixelSurface(x+2,y+1,color);
+    drawPixelSurface(x+1,y  ,color);
+    drawPixelSurface(x+2,y  ,color);
+}
+
+inline void brushStamp4Square(int x,int y,u16 color)
+{
+    for(int oy = -1; oy <= 2; oy++)
+    for(int ox = -1; ox <= 2; ox++)
+        drawPixelSurface(x + ox, y + oy, color);
+}
+
+
+inline void brushStamp(int x,int y,u16 color)
+{
+    bool forceSquare = (brushMode == BRUSH_MODE_DITHER);
+
+    switch(brushSize)
+    {
+        case BRUSH_SIZE_1:
+            drawPixelSurface(x,y,color);
+        break;
+
+        case BRUSH_SIZE_2:
+            brushStamp2(x,y,color);
+        break;
+
+        case BRUSH_SIZE_3:
+            if(forceSquare)
+                brushStamp3Square(x,y,color);
+            else
+                brushStamp3Circle(x,y,color);
+        break;
+
+        case BRUSH_SIZE_4:
+            if(forceSquare)
+                brushStamp4Square(x,y,color);
+            else
+                brushStamp4Circle(x,y,color);
+        break;
+    }
+}
+
+void drawLineSurface(int x0, int y0, int x1, int y1, u16 color){
     int dx = abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0);
@@ -386,15 +522,15 @@ inline void drawLineSurface(int x0, int y0, int x1, int y1, u16 color, int surfa
     int err = dx + dy;
 
     while (1) {
-        // pinta un pixel en surface (índice lineal)
-        surface[(y0<<surfaceW) + x0] = color;
-
+        brushStamp(x0,y0,color);
+        
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
         if (e2 >= dy) { err += dy; x0 += sx; }
         if (e2 <= dx) { err += dx; y0 += sy; }
     }
 }
+
 inline u16 mergeColorAlpha(u16 oldCol, u16 color, u8 alpha)
 {
     if (alpha > MAX_ALPHA) alpha = MAX_ALPHA;
@@ -423,7 +559,7 @@ inline u16 mergeColorAlpha(u16 oldCol, u16 color, u8 alpha)
 }
 
 
-inline void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color, int surfaceW) {
+void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color){
     int dx = abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
     int dy = -abs(y1 - y0);
@@ -431,9 +567,8 @@ inline void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color, int 
     int err = dx + dy;
 
     while (1) {
-        // pinta un pixel en surface (índice lineal)
-        surface[(y0<<surfaceW) + x0] = mergeColorAlpha(surface[(y0<<surfaceW) + x0],color,paletteAlpha);
-        
+        u16 color = mergeColorAlpha(surface[(y0<<surfaceXres) + x0],color,paletteAlpha);
+        brushStamp(x0,y0,color);
 
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
@@ -670,7 +805,10 @@ void clearTopBitmap()
         AVfillDMA(pixelsTopVRAM,j<<8,(((j+1)<<8)-1),_col);//dibuja directamente en la VRAM
     }
 }
-
+void centerCanvas(){
+    mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
+    mainSurfaceYoffset = 96-((1<<surfaceYres)>>1);
+}
 void initBitmap()
 {
     for(int i = 0; i < 16383; i++)
@@ -699,20 +837,18 @@ void initBitmap()
     vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
     bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
 
-    // Cargar imagen inicial
+    // Cargar imagen inicial en VRAM
     decompress(GFXinputBitmap, BG_GFX_SUB, LZ77Vram);
 
     // Transferir pixels a la RAM
     dmaCopyHalfWords(3,pixelsVRAM,pixels , 49152 * sizeof(u16));
 
-    mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
-    mainSurfaceYoffset = 96-((1<<surfaceYres)>>1);
-
+    centerCanvas();
     clearTopBitmap();
 
-    updatePal(0, &palettePos);
     drawSurfaceMain(true);
     drawSurfaceBottom();
+    accurate = true;
 }
 
 void setEditorSprites(){
@@ -725,10 +861,10 @@ void setEditorSprites(){
 
     u16 *gfx32 = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
     dmaCopy(GFXselector24Bitmap, gfx32, 32*32*2);
-    //u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
-    //dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
-    
-            oamSet(&oamSub, 0,
+    u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
+
+            oamSet(&oamSub, selector24oamID,
             0, 16,
             0,
             15, // opaco
@@ -736,7 +872,38 @@ void setEditorSprites(){
             gfx32,
             -1,
             false, false, false, false, false);
-        //oamSet(&oamSub,1,0,0,0,15,SpriteSize_16x16, SpriteColorFormat_Bmp,gfx16,-1,false, false, false, false, false);
+    
+    u16 *gfxBrushSettings = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
+    dmaCopy(GFXbrushSettingsBitmap, gfxBrushSettings, 32*32*2);
+
+    u16 *gfx8 = oamAllocateGfx(&oamSub, SpriteSize_8x8, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector8Bitmap, gfx8, 8*8*2);
+
+    oamSet(&oamSub, brushSettingsOamId,//
+    16, 32,//posición
+        0,//prioridad
+        15,//opaco
+        SpriteSize_32x32, SpriteColorFormat_Bmp,
+        gfxBrushSettings,
+        -1,
+    false, false, false, false, false);
+
+    oamSet(&oamSub, brushSettingsSelectorOamId,//
+    16, 32,//posición
+        0,//prioridad
+        15,//opaco
+        SpriteSize_8x8, SpriteColorFormat_Bmp,
+        gfx8,
+        -1,
+    false, false, false, false, false);
+    oamSet(&oamSub, brushSettingsSelectorOamId+1,//
+    16, 40,//posición
+        0,//prioridad
+        15,//opaco
+        SpriteSize_8x8, SpriteColorFormat_Bmp,
+        gfx8,
+        -1,
+    false, false, false, false, false);
 }
 void setOamBG(){
 u16 *gfxBG = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
@@ -755,6 +922,7 @@ for(int i = 0; i < 16; i++){
         -1,
     false, false, false, false, false);
 }
+//fondo para las paletas
 oamSet(&oamSub, 20,//index
     192, 32,//posición
         1,
@@ -1132,44 +1300,40 @@ void applyTool(int x, int y, bool dragging) {
         color = color |0x8000; //forzar alpha
     }
 
-
     switch (currentTool) {
         case TOOL_BRUSH:
             if (dragging) {
                 if(paletteAlpha != MAX_ALPHA){
                     if(paletteAlpha == 0){
-                        drawLineSurface(prevtpx, prevtpy, x, y, 0, surfaceXres);
+                        drawLineSurface(prevtpx, prevtpy, x, y, 0);
                         break;
                     }
-                    drawLineSurfaceAlpha(prevtpx, prevtpy, x, y, color, surfaceXres);
+                    drawLineSurfaceAlpha(prevtpx, prevtpy, x, y, color);
                     break;
                 }
-                drawLineSurface(prevtpx, prevtpy, x, y, color, surfaceXres);
+                drawLineSurface(prevtpx, prevtpy, x, y, color);
             } else {
                 if(paletteAlpha != MAX_ALPHA){
                     if(paletteAlpha == 0){
-                        surface[(y << surfaceXres) + x] = 0;
+                        brushStamp(x,y,0);
                         break;
                     }
-                    surface[(y << surfaceXres) + x] = mergeColorAlpha(surface[(y << surfaceXres) + x],color,paletteAlpha);
+                    u16 color = mergeColorAlpha(surface[(y << surfaceXres) + x],color,paletteAlpha);
+                    brushStamp(x,y,color);
                     break;
                 }
                 //modo normal
-                surface[(y << surfaceXres) + x] = color;
+                brushStamp(x,y,color);
             }
             break;
-
-
 
         case TOOL_ERASER:
             if (dragging) {
-                drawLineSurface(prevtpx, prevtpy, x, y, 0, surfaceXres);
+                drawLineSurface(prevtpx, prevtpy, x, y, 0);
             } else {
-                surface[(y << surfaceXres) + x] = 0;
+                drawPixelSurface(x,y,0);
             }
             break;
-
-
 
         case TOOL_PICKER:
             if(paletteBpp == 16){
@@ -1181,7 +1345,7 @@ void applyTool(int x, int y, bool dragging) {
                 updatePal(surface[(y << surfaceXres) + x]-color,&palettePos);
             }
                 currentTool = TOOL_BRUSH;//volver a seleccionar el pincel
-                oamSetXY(&oamSub,0,0,16);
+                oamSetXY(&oamSub,selector24oamID,0,16);
             break;
 
 
@@ -1478,10 +1642,26 @@ void updateFPS() {
 int main(void) {
     defaultExceptionHandler();// Mostrar crasheos
     // Intentar montar la SD
+    // Intentar montar primero con DLDI (para flashcards DS/DS Lite)
     bool sd_ok = fatInitDefault();
-    if(sd_ok){
-        chdir("sd:/");
-        currentDir = opendir("/");
+
+    if(sd_ok) {
+        // Verificar si estamos en una flashcard o DSi
+        // En flashcards, la raíz suele ser "fat:/"
+        // En DSi, es "sd:/"
+        
+        // Intentar cambiar a fat:/ primero (flashcards)
+        if(chdir("fat:/") == 0) {
+            currentDir = opendir(".");
+        }
+        // Si falla, intentar sd:/ (DSi)
+        else if(chdir("sd:/") == 0) {
+            currentDir = opendir(".");
+        }
+        // Como último recurso, usar la raíz actual
+        else {
+            currentDir = opendir(".");
+        }
     }
 
     if (!sd_ok) {
@@ -1498,7 +1678,8 @@ int main(void) {
         printf("ERROR: SD CARD NOT INITIATED.\n");
         printf("\x1b[38m\n");//blanco
         printf("You cannot load or save files.\n");
-        printf("This error is not normal if you're in DSi mode.\n");
+        printf("This error may occur on flashcards if DLDI\n");
+        printf("patching was not done correctly.\n");
 
         printf("\nStarting in 3 seconds");
         for (int i = 0; i < 3; i++)//cantidad segundos
@@ -1523,7 +1704,6 @@ int main(void) {
         setBrightness(3, i-15);
         swiWaitForVBlank();
     }
-    
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
     while(1) {
         //inicio del loop (global)
@@ -1604,13 +1784,29 @@ int main(void) {
                 {
                     if(touch.px < 48 && touch.py > 16 && touch.py < 64 && stylusPressed == false)//herramientas
                     {
+                        if(true && touch.px >= 16 && touch.px < 48 && touch.py >= 32 && touch.py < 48){//si está en modo configurar brush
+                            int col = (touch.px - 16)>>3;
+                            int row = (touch.py - 32)>>3;
+                            stylusPressed = true;
+                            switch(row){
+                                case 0://patrones
+                                    brushMode = (BrushMode)col;
+                                    oamSetXY(&oamSub,brushSettingsSelectorOamId,(col<<3)+16,32);
+                                goto frameEnd;
+
+                                case 1://tamaños
+                                    brushSize = (BrushSize)col;
+                                    oamSetXY(&oamSub,brushSettingsSelectorOamId+1,(col<<3)+16,40);
+                                goto frameEnd;
+                            }
+                        }
                         int col = touch.px > 24 ? 1 : 0;
                         int row = touch.py > 40 ? 2 : 0;
                         //convertir col+row a un valor único
                         currentTool = (ToolType)(row + col);
 
                         //además dibujamos un contorno en dónde seleccionamos
-                        oamSetXY(&oamSub,0,col*24, (row*12)+16);//sprite 0 es el contorno 24x24
+                        oamSetXY(&oamSub,selector24oamID,col*24, (row*12)+16);
                         stylusPressed = true;
                         goto frameEnd;
                     }
@@ -1702,24 +1898,23 @@ int main(void) {
                                     drawSurfaceMain(false);drawSurfaceBottom();
                                 goto frameEnd;
 
-                                case 24: //page UP
+                                case 24: // Page UP
+                                case 25: // Page DOWN
+                                {
                                     if(usesPages){
-                                        saveFile(imgFormat,currentFilePath,palette,surface);//saves the current frame
-                                        fileOffset += paletteBpp<<11;//changes offset
-                                        loadFile(imgFormat,currentFilePath,palette,surface);//loqds the new page
-                                        drawSurfaceMain(true);drawSurfaceBottom();accurate = true;//redraw the surface
+                                        saveFile(imgFormat, currentFilePath, palette, surface);
+
+                                        int dir = (selected == 24) ? -1 : +1;
+                                        fileOffset += dir * (paletteBpp << 11);
+
+                                        loadFile(imgFormat, currentFilePath, palette, surface);
+                                        drawSurfaceMain(true);
+                                        drawSurfaceBottom();
+                                        accurate = true;
                                     }
+                                }
                                 goto frameEnd;
 
-                                case 25: //page Down
-                                    if(usesPages){
-                                        saveFile(imgFormat,currentFilePath,palette,surface);
-                                        fileOffset -= paletteBpp<<11;
-                                        fileOffset = MAX(fileOffset,0);
-                                        loadFile(imgFormat,currentFilePath,palette,surface);
-                                        drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
-                                    }
-                                goto frameEnd;
 
                                 case 26: //undo
                                     backupIndex--;
