@@ -1,1 +1,0 @@
-GFXnewImageInput.o: GFXnewImageInput.s

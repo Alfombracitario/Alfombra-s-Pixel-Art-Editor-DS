@@ -1,13 +1,40 @@
 /*
     ADVERTENCIA: este será el código con más bitshifts y comentarios inecesarios que verás, suerte tratando de entender algo!
-     -Alfombra de madera, Septiembre de 2025
+     -Alfombracitario, Septiembre de 2025
 */
 
 /*
-    To-Do list:
-    Poder cambiar el tamaño o tipo de pincel
-    offsets parte 2
+    URGENTE (para v0.3):
+    arreglar brushes en modo 16bpp
+    compatibilidad con flashcards r4
+
+    To-Do list (para v1.0):
+    reordenamiento de código
+    añadir figuras (dos pasos)
+        rectangulo
+        circulo
+        línea
+    añadir figuras (tres pasos)
+        parabola
+
+    select tool
+    move
+
+    añadir gradientes (16bpp)
+    
+    Añadir settings
+        invertir colores
+        index swap (colores)
+        cambiar hue global
+        reducir colores (posterización)
+        aumentar páginas (solo para formatos retro)
+        eliminar páginas
+
+    añadir soporte a imagenes más grandes (cargando pedazos)
+
+    añadir un preview para el cargador de archivos
 */
+
 #include <nds.h>
 #include <stdio.h>
 #include <time.h>
@@ -21,7 +48,7 @@
 
 #include "avdslib.h"
 #include "formats.h"
-#include "intro.h"//archivo que pienso usar para todos mis juegos de DS
+#include "intro.h"//intro global para todos mis juegos
 #include "GFXinput.h"
 #include "GFXconsoleInput.h"
 #include "GFXselector24.h"
@@ -49,6 +76,8 @@
 #define C_BLACK 32768
 #define C_GRAY 48623
 
+#define STYLUSHOLDTIME 15
+
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 
@@ -58,6 +87,7 @@
 #define selector24oamID 64
 #define brushSettingsOamId 24
 #define brushSettingsSelectorOamId 22
+#define selector16oamId 65
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 //static PrintConsole bottomConsole;
@@ -65,7 +95,7 @@ static PrintConsole topConsole;
 //IWRAM, 32KB usados
 u16 surface[16384]__attribute__((section(".iwram"))); // 32 KB en IWRAM
 
-//RAM 360,960 bytes usados
+//RAM 360,960 bytes usados (en arrays)
 u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
 u16 *gfx32;
@@ -123,8 +153,8 @@ int subSurfaceYoffset = 0;
 int subSurfaceZoom = 3;// 8 veces más cerca
 int sleepTimer = 60;//frames para que se duerma (baje FPS)
 int sleepingFrames = 1;//solo espera un frame
-
-
+int stylusHoldTimer = STYLUSHOLDTIME;
+bool stylusRepeat = false;
 //Exponentes
 //máximo es 7
 int surfaceXres = 7;
@@ -158,7 +188,7 @@ int fileOffset = 0;
 int gridSkips = 0;
 bool rPressed = false;
 bool screensSwapped = false;
-bool paletteZoneCleaned = false;
+bool showBrushSettings = false;
 
 enum {
     ACTION_NONE      = 0,
@@ -182,8 +212,8 @@ ToolType currentTool = TOOL_BRUSH; // por defecto
 typedef enum {
     BRUSH_MODE_NORMAL = 0,
     BRUSH_MODE_DITHER,
-    BRUSH_MODE_HLINES,
     BRUSH_MODE_VLINES,
+    BRUSH_MODE_HLINES,
 } BrushMode;
 
 typedef enum {
@@ -567,8 +597,8 @@ void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color){
     int err = dx + dy;
 
     while (1) {
-        u16 color = mergeColorAlpha(surface[(y0<<surfaceXres) + x0],color,paletteAlpha);
-        brushStamp(x0,y0,color);
+        u16 col = mergeColorAlpha(surface[(y0<<surfaceXres) + x0],color,paletteAlpha);
+        brushStamp(x0,y0,col);
 
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
@@ -709,6 +739,7 @@ void drawColorPalette()
 
 void drawNesPalette()
 {
+    AVdrawRectangle(pixels,192,64,32,16,0);
     //dibujar paleta
     for(int i = 0; i < 4; i++)//vertical
     {
@@ -850,6 +881,36 @@ void initBitmap()
     drawSurfaceBottom();
     accurate = true;
 }
+u16 *gfxBrushSettings;
+u16 *gfx8;
+void setBrushSettingsSprites(bool on){
+    showBrushSettings = on;
+    oamSet(&oamSub, brushSettingsOamId,//
+    16, 32,//posición
+        0,//prioridad
+        on,//opaco
+        SpriteSize_32x32, SpriteColorFormat_Bmp,
+        gfxBrushSettings,
+        -1,
+    false, false, false, false, false);
+
+    oamSet(&oamSub, brushSettingsSelectorOamId,//
+    ((int)brushMode<<3)+16, 32,//posición
+        0,//prioridad
+        on,//opaco
+        SpriteSize_8x8, SpriteColorFormat_Bmp,
+        gfx8,
+        -1,
+    false, false, false, false, false);
+    oamSet(&oamSub, brushSettingsSelectorOamId+1,//
+    ((int)brushSize<<3)+16, 40,//posición
+        0,//prioridad
+        on,//opaco
+        SpriteSize_8x8, SpriteColorFormat_Bmp,
+        gfx8,
+        -1,
+    false, false, false, false, false);
+}
 
 void setEditorSprites(){
     //iniciamos el sprite para dibujar : )
@@ -873,38 +934,15 @@ void setEditorSprites(){
             -1,
             false, false, false, false, false);
     
-    u16 *gfxBrushSettings = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
+    gfxBrushSettings = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
     dmaCopy(GFXbrushSettingsBitmap, gfxBrushSettings, 32*32*2);
 
-    u16 *gfx8 = oamAllocateGfx(&oamSub, SpriteSize_8x8, SpriteColorFormat_Bmp);
+    gfx8 = oamAllocateGfx(&oamSub, SpriteSize_8x8, SpriteColorFormat_Bmp);
     dmaCopy(GFXselector8Bitmap, gfx8, 8*8*2);
 
-    oamSet(&oamSub, brushSettingsOamId,//
-    16, 32,//posición
-        0,//prioridad
-        15,//opaco
-        SpriteSize_32x32, SpriteColorFormat_Bmp,
-        gfxBrushSettings,
-        -1,
-    false, false, false, false, false);
-
-    oamSet(&oamSub, brushSettingsSelectorOamId,//
-    16, 32,//posición
-        0,//prioridad
-        15,//opaco
-        SpriteSize_8x8, SpriteColorFormat_Bmp,
-        gfx8,
-        -1,
-    false, false, false, false, false);
-    oamSet(&oamSub, brushSettingsSelectorOamId+1,//
-    16, 40,//posición
-        0,//prioridad
-        15,//opaco
-        SpriteSize_8x8, SpriteColorFormat_Bmp,
-        gfx8,
-        -1,
-    false, false, false, false, false);
+    setBrushSettingsSprites(true);
 }
+
 void setOamBG(){
 u16 *gfxBG = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
 dmaCopy(GFXbackgroundBitmap, gfxBG, 32*32*2);
@@ -1115,9 +1153,6 @@ void loadFile(int format,char* path,u16* palette,u16* surface){
     }
 }
 
-void offsetChange(){
-
-}
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys) {
     int actions = ACTION_NONE;
@@ -1318,8 +1353,8 @@ void applyTool(int x, int y, bool dragging) {
                         brushStamp(x,y,0);
                         break;
                     }
-                    u16 color = mergeColorAlpha(surface[(y << surfaceXres) + x],color,paletteAlpha);
-                    brushStamp(x,y,color);
+                    u16 col = mergeColorAlpha(surface[(y << surfaceXres) + x],color,paletteAlpha);
+                    brushStamp(x,y,col);
                     break;
                 }
                 //modo normal
@@ -1720,6 +1755,8 @@ int main(void) {
             if(kUp & KEY_TOUCH){//permitir volver a dibujar en un pixel
                 prevx = -1;
                 prevy = -1;
+                stylusHoldTimer = STYLUSHOLDTIME;
+                stylusRepeat = false;
             }
             if(kHeld & KEY_L || kHeld & KEY_X)//zoom y offsets
             {
@@ -1758,6 +1795,11 @@ int main(void) {
             if(palettePos < 0){palettePos = 0;}
             //recordar que debo hacer cambios dependiendo del bpp
             if (kHeld & KEY_TOUCH) {
+                if (stylusHoldTimer > 0) {
+                    stylusHoldTimer--;
+                } else {
+                    stylusRepeat = true;
+                }
                 if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//TOUCH EN SURFACE
                     int localX = touch.px - SURFACE_X;
                     int localY = touch.py;
@@ -1784,27 +1826,31 @@ int main(void) {
                 {
                     if(touch.px < 48 && touch.py > 16 && touch.py < 64 && stylusPressed == false)//herramientas
                     {
-                        if(true && touch.px >= 16 && touch.px < 48 && touch.py >= 32 && touch.py < 48){//si está en modo configurar brush
+                        if(showBrushSettings && touch.px >= 16 && touch.px < 48 && touch.py >= 32 && touch.py < 48){//si está en modo configurar brush
                             int col = (touch.px - 16)>>3;
                             int row = (touch.py - 32)>>3;
                             stylusPressed = true;
                             switch(row){
                                 case 0://patrones
                                     brushMode = (BrushMode)col;
-                                    oamSetXY(&oamSub,brushSettingsSelectorOamId,(col<<3)+16,32);
-                                goto frameEnd;
+                                break;
 
                                 case 1://tamaños
                                     brushSize = (BrushSize)col;
-                                    oamSetXY(&oamSub,brushSettingsSelectorOamId+1,(col<<3)+16,40);
-                                goto frameEnd;
+                                break;
                             }
+                            setBrushSettingsSprites(true);
+                            goto frameEnd;
                         }
                         int col = touch.px > 24 ? 1 : 0;
                         int row = touch.py > 40 ? 2 : 0;
                         //convertir col+row a un valor único
                         currentTool = (ToolType)(row + col);
-
+                        if(currentTool == TOOL_BRUSH){
+                            setBrushSettingsSprites(true);
+                        }else{
+                            setBrushSettingsSprites(false);
+                        }
                         //además dibujamos un contorno en dónde seleccionamos
                         oamSetXY(&oamSub,selector24oamID,col*24, (row*12)+16);
                         stylusPressed = true;
@@ -1942,7 +1988,7 @@ int main(void) {
                 //zona de paletas y otras configuraciones
                 if(touch.px >= 192)//apunta a la parte derecha
                 {
-                    if (touch.py < 32 && stylusPressed == false) { // botones superiores
+                    if (touch.py < 32 && (stylusPressed == false || stylusRepeat == true)) { // botones superiores
                         int col = (touch.px - 192) >> 4;   // 0..3
                         int row = touch.py >> 4;           // 0..1
                         if ((unsigned)col < 4 && (unsigned)row < 2) {
@@ -2297,20 +2343,20 @@ int main(void) {
         es por flexibilidad y además, es más fácil, no debo ahorrar VRAM realmente...
 
     2. ¿por qué uso GOTO?
-        sé que es considerado una malísima practica, y en varios casos es verdad,
-        sin embargo si te fijas bien, en este códgio solo hay 2 labels
+        sé que es considerado una malísima practica, y en varios casos es verdad.
+        Sin embargo, si te fijas bien, en este códgio solo hay 2 labels
         textConsole y frameEnd, estos saltos de hecho son muy útiles, irónicamente para ordenar más el proyecto y
         porque pueden mejorar el rendimiento considerablemente, ya que generalmente los uso para saltarme código que no necesito ejecutar
 
     3. ¿por qué tantos magic numbers?
         esta es mala mía 100%, en los proyectos en paralelo que he hecho esto ya lo hago JAJAJ
 
-    4. por qué está casi todo en main.c?
-        mismo que la 3, es mi primer código en el que uso más de un archivo de hecho.
+    4. por qué está casi todo en main.cpp?
+        un poco de lo que decía antes de la 1, es mi primer código en el que uso más de un archivo de hecho.
     
     5. por qué haces estos comentarios tontos o cosas sin sentido como esta?
-        programo por diversión y mi único compañero soy yo mismo! por lo general trato de mantener seriedad pero...
-        llevo meses en este archivo así que sí, fallé lol
+        programo por diversión y mi único compañero soy yo mismo!
+        imagínate llevar programando en el mismo archivo por meses, en algún momento te pondrás chistoso.
     */
    return 0;
 }

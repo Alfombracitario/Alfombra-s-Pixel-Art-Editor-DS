@@ -32,7 +32,7 @@ USE_FAT         := 1
 USE_MAXMOD      := 1
 
 # -------------------------------------------------
-# Opciones extra (opcional)
+# Opciones extra 
 # -------------------------------------------------
 CFLAGS          += -O3 -Wall
 CXXFLAGS        += -O3 -Wall

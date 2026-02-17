@@ -48,7 +48,7 @@ void AVdrawRectangle(u16* arr, int x, int width, int y, int height, u16 color)
         return;
     }
 
-    static u16 tempLine[256];  // suficiente para 256 pixeles
+    u16 tempLine[256];
     for (int j = 0; j < width; j++)
         tempLine[j] = color;
 
@@ -57,7 +57,6 @@ void AVdrawRectangle(u16* arr, int x, int width, int y, int height, u16 color)
         memcpy(row, tempLine, width * 2);
     }
 }
-
 
 void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color,int arrayXres = 8) {
     int xto = x + width;
