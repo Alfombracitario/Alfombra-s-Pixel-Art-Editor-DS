@@ -7,7 +7,6 @@
     more palettes formats
     GBA tiled 8bpp
     finish .acs
-    streaming
     preview
 */
 #include <nds.h>
@@ -454,21 +453,26 @@ int exportPal(const char* path){
     FILE* f = fopen(path, "wb");
     if (!f) return -1;
 
-    int bytesToWrite = paletteSize*3;
-    for(int i = 0; i < paletteSize; i++)
+    int bytesToWrite = paletteSize * 3;
+
+    u8* out = (u8*)backup; // buffer temporal
+
+    for (int i = 0; i < paletteSize; i++)
     {
-        //obtener los colores
         u16 color = palette[i];
+
         u8 r = color & 31;
         u8 g = (color >> 5) & 31;
         u8 b = (color >> 10) & 31;
-        
-        backup[i] = r<<3;i++;
-        backup[i] = g<<3;i++;
-        backup[i] = b<<3;i++;
+
+        int idx = i * 3;
+
+        out[idx]     = r << 3;
+        out[idx + 1] = g << 3;
+        out[idx + 2] = b << 3;
     }
 
-    size_t written = fwrite((u8*)backup, 1, bytesToWrite, f);
+    size_t written = fwrite(out, 1, bytesToWrite, f);
     fclose(f);
 
     if (written != bytesToWrite) return -1;
@@ -658,17 +662,28 @@ void saveBMP(const char* filename, uint16_t* palette, uint16_t* surface) {
     writeBmpHeader(out);
 
     // Escribir píxeles (desde abajo hacia arriba porque BMP lo requiere)
-    for(int y = 127; y >= 0; y--) {
-        for(int x = 0; x < 128; x++) {
-            uint16_t color = palette[surface[(y<<7)+ x]];
-            
-            //reordenamos el color para poder escribirlo correctamente
-            //1555 ABGR
-            u8 b = color & 31;
-            u8 g = (color >> 5) & 31;
-            u8 r = (color >> 10) & 31;
-            int col = (b<<19)|(g<<11)|(r<<3);//escribo en RGB888 porque mi lector soporta eso
-            fwrite(&col, 3, 1, out);
+    if(paletteBpp == 16){
+        for(int y = 127; y >= 0; y--) {
+            for(int x = 0; x < 128; x++) {
+                uint16_t color = surface[(y<<7)+ x];
+                u8 b = color & 31;
+                u8 g = (color >> 5) & 31;
+                u8 r = (color >> 10) & 31;
+                int col = (b<<19)|(g<<11)|(r<<3);//escribo en RGB888 porque mi lector soporta eso
+                fwrite(&col, 3, 1, out);
+            }
+        }  
+    }
+    else{
+        for(int y = 127; y >= 0; y--) {
+            for(int x = 0; x < 128; x++) {
+                uint16_t color = palette[surface[(y<<7)+ x]];
+                u8 b = color & 31;
+                u8 g = (color >> 5) & 31;
+                u8 r = (color >> 10) & 31;
+                int col = (b<<19)|(g<<11)|(r<<3);//escribo en RGB888 porque mi lector soporta eso
+                fwrite(&col, 3, 1, out);
+            }
         }
     }
     fclose(out);

@@ -22,6 +22,9 @@
 
     añadir gradientes (16bpp)
     
+    swap de pantallas
+    selector desde pantalla de arriba
+    
     Añadir settings
         invertir colores
         index swap (colores)
