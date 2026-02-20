@@ -1094,8 +1094,8 @@ void saveFile(int format,char* path,u16* palette,u16* surface){
         case formatSNES8:
             exportSNES8bpp(path,surface,1<<surfaceYres);
         break;
-        case formatRAW:
-            loadArray(path,surface,2<<surfaceXres<<surfaceYres);
+        case formatPal1555:
+            exportPal1555(path);
         break;
         case formatACS:
             exportACS(path,surface);
@@ -1147,8 +1147,8 @@ void loadFile(int format,char* path,u16* palette,u16* surface){
         case formatSNES8:usesPages = true;
             importSNES8bpp(path,surface);
         break;
-        case formatRAW:usesPages = false;
-            saveArray(path,surface,32768);
+        case formatPal1555:
+            importPal1555(path);
         break;
         case formatACS:usesPages = false;
             importACS(path,surface);
@@ -2279,7 +2279,7 @@ int main(void) {
                         ".pcx",
                         ".pal [YY-CHR]",
                         ".bin [SNES 8bpp]",
-                        ".raw",
+                        ".pal [ARGB 1555]",
                         ".acs [Custom format]"
                     };
                     const char formats[MaxFormats][6] = {
@@ -2293,7 +2293,7 @@ int main(void) {
                         ".pcx",
                         ".pal",
                         ".gif",
-                        ".tga",
+                        ".pal",
                         ".acs"
                     };
                     strcpy(format,formats[selectorA]);

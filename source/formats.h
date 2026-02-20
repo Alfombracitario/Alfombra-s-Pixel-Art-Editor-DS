@@ -21,6 +21,9 @@ int exportPCX(const char* path, u16* surface, int width, int height);
 int importPal(const char* path);
 int exportPal(const char* path);
 
+int importPal1555(const char* path);
+int exportPal1555(const char* path);
+
 int importSNES8bpp(const char* path, u16* surface);
 int exportSNES8bpp(const char* path, u16* surface, int height);
 
@@ -48,7 +51,7 @@ void importACS(const char* path, u16* surface);
 #define formatPCX 7
 #define formatPAL 8
 #define formatSNES8 9
-#define formatRAW 10
+#define formatPal1555 10
 #define formatACS 11
 
 #endif // FORMATS_H
