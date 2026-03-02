@@ -4,8 +4,7 @@
 */
 
 /*
-    URGENTE (para v0.3):
-    arreglar brushes en modo 16bpp
+    URGENTE (para v0.4):
     compatibilidad con flashcards r4
 
     To-Do list (para v1.0):
@@ -63,7 +62,7 @@
 #include "GFXselector8.h"
 //Macros
 #define SCREEN_W 256
-#define SCREEN_H 256
+#define SCREEN_H 192
 #define SURFACE_X 64
 #define SURFACE_Y 0
 #define SURFACE_W 128
@@ -159,13 +158,12 @@ int sleepingFrames = 1;//solo espera un frame
 int stylusHoldTimer = STYLUSHOLDTIME;
 bool stylusRepeat = false;
 //Exponentes
-//máximo es 7
+//máximo es 7, por favor, no pongas un número mayor a 7.
 int surfaceXres = 7;
 int surfaceYres = 7;
 
 int stackYres = 7;
 int stackXres = 7;
-
 
 // Variables globales para controlar el modo actual
 enum subMode { SUB_TEXT, SUB_BITMAP };
@@ -469,54 +467,140 @@ inline void drawPixelSurface(int x, int y, u16 color)
         surface[(y <<surfaceXres) + x] = color;
     }
 }
+inline u16 mergeColorAlpha(u16 oldCol, u16 color, u8 alpha)
+{
+    if (alpha > MAX_ALPHA) alpha = MAX_ALPHA;
 
+    u8 r1 = (oldCol >> 10) & 31;
+    u8 g1 = (oldCol >> 5)  & 31;
+    u8 b1 =  oldCol        & 31;
+
+    u8 r  = (color >> 10) & 31;
+    u8 g  = (color >> 5)  & 31;
+    u8 b  =  color        & 31;
+
+    int r2 = (r * alpha + r1 * (MAX_ALPHA - alpha)) / MAX_ALPHA;
+    int g2 = (g * alpha + g1 * (MAX_ALPHA - alpha)) / MAX_ALPHA;
+    int b2 = (b * alpha + b1 * (MAX_ALPHA - alpha)) / MAX_ALPHA;
+
+    // --- corrección de estancamiento ---
+    if (alpha > 0)
+    {
+        if (r2 == r1) r2 += (r > r1) - (r < r1);
+        if (g2 == g1) g2 += (g > g1) - (g < g1);
+        if (b2 == b1) b2 += (b > b1) - (b < b1);
+    }
+
+    return (r2 << 10) | (g2 << 5) | b2 | 0x8000;
+}
+
+inline void drawPixelSurfaceAlpha(int x, int y, u16 color)
+{
+    if((unsigned)x < 1<<surfaceXres &&
+       (unsigned)y < 1<<surfaceYres &&
+       brushPatternPass(x, y, brushMode))
+    {
+        int index = (y << surfaceXres)+x;
+        surface[index] = mergeColorAlpha(color,surface[index],paletteAlpha);
+    }
+}
 inline void brushStamp2(int x,int y,u16 color)
 {
-    drawPixelSurface(x  ,y  ,color);
-    drawPixelSurface(x+1,y  ,color);
-    drawPixelSurface(x  ,y+1,color);
-    drawPixelSurface(x+1,y+1,color);
+    if(paletteAlpha != MAX_ALPHA){
+        drawPixelSurfaceAlpha(x  ,y  ,color);
+        drawPixelSurfaceAlpha(x+1,y  ,color);
+        drawPixelSurfaceAlpha(x  ,y+1,color);
+        drawPixelSurfaceAlpha(x+1,y+1,color);
+    }
+    else{
+        drawPixelSurface(x  ,y  ,color);
+        drawPixelSurface(x+1,y  ,color);
+        drawPixelSurface(x  ,y+1,color);
+        drawPixelSurface(x+1,y+1,color);
+    }
 }
 
 inline void brushStamp3Square(int x,int y,u16 color)
 {
-    for(int oy=-1; oy<=1; oy++)
-    for(int ox=-1; ox<=1; ox++)
-        drawPixelSurface(x+ox,y+oy,color);
+    if(paletteAlpha != MAX_ALPHA){
+        for(int oy=-1; oy<=1; oy++)
+        for(int ox=-1; ox<=1; ox++)
+            drawPixelSurfaceAlpha(x+ox,y+oy,color);
+    }
+    else{
+        for(int oy=-1; oy<=1; oy++)
+        for(int ox=-1; ox<=1; ox++)
+            drawPixelSurface(x+ox,y+oy,color);
+    }
 }
 
 inline void brushStamp3Circle(int x,int y,u16 color)
 {
-    drawPixelSurface(x  ,y  ,color);
-    drawPixelSurface(x+1,y  ,color);
-    drawPixelSurface(x  ,y+1,color);
-    drawPixelSurface(x-1,y,color);
-    drawPixelSurface(x,y-1,color);
+    if(paletteAlpha != MAX_ALPHA){
+        drawPixelSurfaceAlpha(x  ,y  ,color);
+        drawPixelSurfaceAlpha(x+1,y  ,color);
+        drawPixelSurfaceAlpha(x  ,y+1,color);
+        drawPixelSurfaceAlpha(x-1,y,color);
+        drawPixelSurfaceAlpha(x,y-1,color);
+    }
+    else{
+        drawPixelSurface(x  ,y  ,color);
+        drawPixelSurface(x+1,y  ,color);
+        drawPixelSurface(x  ,y+1,color);
+        drawPixelSurface(x-1,y,color);
+        drawPixelSurface(x,y-1,color);
+    }
+
 }
 inline void brushStamp4Circle(int x,int y,u16 color)
 {
-    drawPixelSurface(x+1,y-1 ,color);
-    drawPixelSurface(x  ,y-1 ,color);
-    drawPixelSurface(x-1,y+1 ,color);
-    drawPixelSurface(x-1,y  ,color);
-    drawPixelSurface(x  ,y  ,color);
-    drawPixelSurface(x  ,y+1,color);
-    drawPixelSurface(x  ,y+2,color);
-    drawPixelSurface(x+1,y+1,color);
-    drawPixelSurface(x+1,y+2,color);
-    drawPixelSurface(x+2,y+1,color);
-    drawPixelSurface(x+1,y  ,color);
-    drawPixelSurface(x+2,y  ,color);
+    if(paletteAlpha != MAX_ALPHA){
+        drawPixelSurfaceAlpha(x+1,y-1 ,color);
+        drawPixelSurfaceAlpha(x  ,y-1 ,color);
+        drawPixelSurfaceAlpha(x-1,y+1 ,color);
+        drawPixelSurfaceAlpha(x-1,y  ,color);
+        drawPixelSurfaceAlpha(x  ,y  ,color);
+        drawPixelSurfaceAlpha(x  ,y+1,color);
+        drawPixelSurfaceAlpha(x  ,y+2,color);
+        drawPixelSurfaceAlpha(x+1,y+1,color);
+        drawPixelSurfaceAlpha(x+1,y+2,color);
+        drawPixelSurfaceAlpha(x+2,y+1,color);
+        drawPixelSurfaceAlpha(x+1,y  ,color);
+        drawPixelSurfaceAlpha(x+2,y  ,color);
+    }
+    else{
+        drawPixelSurface(x+1,y-1 ,color);
+        drawPixelSurface(x  ,y-1 ,color);
+        drawPixelSurface(x-1,y+1 ,color);
+        drawPixelSurface(x-1,y  ,color);
+        drawPixelSurface(x  ,y  ,color);
+        drawPixelSurface(x  ,y+1,color);
+        drawPixelSurface(x  ,y+2,color);
+        drawPixelSurface(x+1,y+1,color);
+        drawPixelSurface(x+1,y+2,color);
+        drawPixelSurface(x+2,y+1,color);
+        drawPixelSurface(x+1,y  ,color);
+        drawPixelSurface(x+2,y  ,color);
+    }
+
 }
 
 inline void brushStamp4Square(int x,int y,u16 color)
 {
-    for(int oy = -1; oy <= 2; oy++)
-    for(int ox = -1; ox <= 2; ox++)
-        drawPixelSurface(x + ox, y + oy, color);
+    if(paletteAlpha != MAX_ALPHA){
+        for(int oy = -1; oy <= 2; oy++)
+        for(int ox = -1; ox <= 2; ox++)
+            drawPixelSurfaceAlpha(x + ox, y + oy, color);
+    }
+    else{
+        for(int oy = -1; oy <= 2; oy++)
+        for(int ox = -1; ox <= 2; ox++)
+            drawPixelSurface(x + ox, y + oy, color);
+    }
+
 }
 
-
+//decidir el patrón y tamaño de pincel
 inline void brushStamp(int x,int y,u16 color)
 {
     bool forceSquare = (brushMode == BRUSH_MODE_DITHER);
@@ -524,7 +608,9 @@ inline void brushStamp(int x,int y,u16 color)
     switch(brushSize)
     {
         case BRUSH_SIZE_1:
-            drawPixelSurface(x,y,color);
+            if(paletteAlpha != MAX_ALPHA){
+                drawPixelSurfaceAlpha(x,y,color);
+            }else{drawPixelSurface(x,y,color);}
         break;
 
         case BRUSH_SIZE_2:
@@ -564,34 +650,6 @@ void drawLineSurface(int x0, int y0, int x1, int y1, u16 color){
     }
 }
 
-inline u16 mergeColorAlpha(u16 oldCol, u16 color, u8 alpha)
-{
-    if (alpha > MAX_ALPHA) alpha = MAX_ALPHA;
-
-    u8 r1 = (oldCol >> 10) & 31;
-    u8 g1 = (oldCol >> 5)  & 31;
-    u8 b1 =  oldCol        & 31;
-
-    u8 r  = (color >> 10) & 31;
-    u8 g  = (color >> 5)  & 31;
-    u8 b  =  color        & 31;
-
-    int r2 = (r * alpha + r1 * (MAX_ALPHA - alpha)) / MAX_ALPHA;
-    int g2 = (g * alpha + g1 * (MAX_ALPHA - alpha)) / MAX_ALPHA;
-    int b2 = (b * alpha + b1 * (MAX_ALPHA - alpha)) / MAX_ALPHA;
-
-    // --- corrección de estancamiento ---
-    if (alpha > 0)
-    {
-        if (r2 == r1) r2 += (r > r1) - (r < r1);
-        if (g2 == g1) g2 += (g > g1) - (g < g1);
-        if (b2 == b1) b2 += (b > b1) - (b < b1);
-    }
-
-    return (r2 << 10) | (g2 << 5) | b2 | 0x8000;
-}
-
-
 void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color){
     int dx = abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
@@ -600,8 +658,7 @@ void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color){
     int err = dx + dy;
 
     while (1) {
-        u16 col = mergeColorAlpha(surface[(y0<<surfaceXres) + x0],color,paletteAlpha);
-        brushStamp(x0,y0,col);
+        brushStamp(x0,y0,color);
 
         if (x0 == x1 && y0 == y1) break;
         int e2 = 2 * err;
@@ -1014,7 +1071,6 @@ void textKeyboardDraw(){
     int bg2 = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
 
     //hay espacio para una capa 16bpp de 128x128!!11!
-
     dmaCopy(GFXconsoleInputPal, BG_PALETTE_SUB, GFXconsoleInputPalLen);
     dmaCopy(GFXconsoleInputBitmap, bgGetGfxPtr(bg2), GFXconsoleInputBitmapLen);
 }
@@ -1185,8 +1241,9 @@ int getActionsFromTouch(int button) {
             showGrid = !showGrid;
             drawSurfaceBottom();
         break;
-        case 7://unused
-
+        case 7:
+            screensSwapped = true;
+            lcdSwap();
         break;
     }
     return actions;
@@ -1351,15 +1408,12 @@ void applyTool(int x, int y, bool dragging) {
                 }
                 drawLineSurface(prevtpx, prevtpy, x, y, color);
             } else {
-                if(paletteAlpha != MAX_ALPHA){
-                    if(paletteAlpha == 0){
-                        brushStamp(x,y,0);
-                        break;
-                    }
-                    u16 col = mergeColorAlpha(surface[(y << surfaceXres) + x],color,paletteAlpha);
-                    brushStamp(x,y,col);
+                if(paletteAlpha == 0){
+                    brushStamp(x,y,0);
                     break;
                 }
+                brushStamp(x,y,color);
+                break;
                 //modo normal
                 brushStamp(x,y,color);
             }
@@ -1405,30 +1459,39 @@ void applyTool(int x, int y, bool dragging) {
 }
 //========================================= Herramientas extras=====================|
 //copia en el stack una parte de la imagen
-void copyFromSurfaceToStack() {
-    int zoom = subSurfaceZoom-(7-MAX(surfaceXres,surfaceYres));//arreglar el zoom a todas las resoluciones
-    int xsize = surfaceXres - zoom;
-    int ysize = surfaceYres - zoom;
-    int xoffset = subSurfaceXoffset;
-    int yoffset = subSurfaceYoffset;
-    stackXres = xsize;
-    stackYres = ysize;
+void copyFromSurfaceToStack()
+{
+    int zoom = subSurfaceZoom - (7 - MAX(surfaceXres, surfaceYres));
 
-    // Convertir a valores reales
-    int stackW = 1 << xsize;
-    int stackH = 1 << ysize;
-    int surfaceW = 1 << surfaceXres;
+    stackXres = surfaceXres - zoom;
+    stackYres = surfaceYres - zoom;
 
+    int stackW   = 1 << stackXres;
+    int stackH   = 1 << stackYres;
+    int rowBytes = stackW << 1; // sizeof(u16) = 2
+
+    int baseOffset = subSurfaceXoffset +
+                    (subSurfaceYoffset << surfaceXres);
+
+    u16* src = surface + baseOffset;
     u16* dst = stack;
-    u16* src = surface + (yoffset * surfaceW + xoffset);
 
-    for (int y = 0; y < stackH; ++y) {
-        // Copia una fila entera
-        memcpy(dst, src, stackW * sizeof(u16));
+    int surfaceStride = 1 << surfaceXres;
 
-        // Avanzar una fila en ambos
+    // en este caso copiamos todo de una ya que los bits están alineados
+    if (stackW == surfaceStride)
+    {
+        memcpy(dst, src, rowBytes * stackH);
+        return;
+    }
+
+    // Copia normal por filas
+    for (int y = stackH; y--; )
+    {
+        memcpy(dst, src, rowBytes);
+
         dst += stackW;
-        src += surfaceW;
+        src += surfaceStride;
     }
 }
 void cutFromSurfaceToStack(){
@@ -1632,6 +1695,112 @@ void rotateNegative() { // 90° Horario
         }
     }
 }
+
+void shiftDownWrap() {
+    copyFromSurfaceToStack();
+
+    int width  = 1 << stackXres;
+    int height = 1 << stackYres;
+
+    // Guardar última fila en la primera
+    memcpy(
+        stack,
+        stack + ((height - 1) << stackXres),
+        width * sizeof(u16)
+    );
+
+    // Mover filas hacia abajo
+    for(int y = height - 1; y > 0; y--)
+    {
+        int current = y << stackXres;
+        int prev    = (y - 1) << stackXres;
+
+        memcpy(
+            stack + current,
+            stack + prev,
+            width * sizeof(u16)
+        );
+    }
+
+    pasteFromStackToSurface();
+}
+
+void shiftUpWrap() {
+    copyFromSurfaceToStack();
+
+    int width  = 1 << stackXres;
+    int height = 1 << stackYres;
+
+    // Guardar primera fila en la última
+    memcpy(
+        stack + ((height - 1) << stackXres),
+        stack,
+        width * sizeof(u16)
+    );
+
+    // Mover filas hacia arriba
+    for(int y = 0; y < height - 1; y++)
+    {
+        int current = y << stackXres;
+        int next    = (y + 1) << stackXres;
+
+        memcpy(
+            stack + current,
+            stack + next,
+            width * sizeof(u16)
+        );
+    }
+
+    pasteFromStackToSurface();
+}
+
+void shiftRightWrap()
+{
+    copyFromSurfaceToStack();
+
+    int width  = 1 << stackXres;
+    int height = 1 << stackYres;
+
+    for(int y = 0; y < height; y++)
+    {
+        int row = y << stackXres;
+
+        u16 last = stack[row + width - 1];
+
+        for(int x = width - 1; x > 0; x--)
+        {
+            stack[row + x] = stack[row + x - 1];
+        }
+
+        stack[row] = last;
+    }
+
+    pasteFromStackToSurface();
+}
+
+void shiftLeftWrap() {
+    copyFromSurfaceToStack();
+
+    int width  = 1 << stackXres;
+    int height = 1 << stackYres;
+
+    for(int y = 0; y < height; y++)
+    {
+        int row = y << stackXres;
+
+        u16 first = stack[row];
+
+        for(int x = 0; x < width - 1; x++)
+        {
+            stack[row + x] = stack[row + x + 1];
+        }
+
+        stack[row + width - 1] = first;
+    }
+
+    pasteFromStackToSurface();
+}
+
 //====================================================================Backups==============================================================|
 void setBackupVariables(){
     backupIndex = 0;
@@ -1753,369 +1922,395 @@ int main(void) {
         touchRead(&touch);
         int actions = ACTION_NONE;
 
+        screensSwapped = false;//PLACEHOLDER
+
         if(currentSubMode == SUB_BITMAP)
-        {
-            if(kUp & KEY_TOUCH){//permitir volver a dibujar en un pixel
-                prevx = -1;
-                prevy = -1;
-                stylusHoldTimer = STYLUSHOLDTIME;
-                stylusRepeat = false;
-            }
-            if(kHeld & KEY_L || kHeld & KEY_X)//zoom y offsets
-            {
-                actions |= getActionsFromKeys(kDown);
-            }
-            else//paleta de colores
-            {
-                if(kDown & KEY_DOWN)
+        {   
+            if(screensSwapped == false){
+                if(kUp & KEY_TOUCH){//permitir volver a dibujar en un pixel
+                    prevx = -1;
+                    prevy = -1;
+                    stylusHoldTimer = STYLUSHOLDTIME;
+                    stylusRepeat = false;
+                }
+                if(kHeld & KEY_L || kHeld & KEY_X)//zoom y offsets
                 {
-                    updatePal(16, &palettePos);
-                    goto frameEnd;
+                    actions |= getActionsFromKeys(kDown);
                 }
-                if(kDown & KEY_UP)
+                else//paleta de colores
                 {
-                    updatePal(-16, &palettePos);
-                    goto frameEnd;
-                }
-                if(kDown & KEY_LEFT)
-                {
-                    updatePal(-1, &palettePos);
-                    goto frameEnd;
-                }
-                if(kDown & KEY_RIGHT)
-                {
-                    updatePal(1, &palettePos);
-                    goto frameEnd;
-                }
-            }
-            if(kDown & KEY_R || kDown & KEY_Y){
-                showGrid = !showGrid;
-                drawSurfaceBottom();
-                goto frameEnd;
-            }
-            //===========================================PALETAS=========================================================
-            palettePos = palettePos & (paletteSize-1);//mantiene la paleta dentro de un límite
-            if(palettePos < 0){palettePos = 0;}
-            //recordar que debo hacer cambios dependiendo del bpp
-            if (kHeld & KEY_TOUCH) {
-                if (stylusHoldTimer > 0) {
-                    stylusHoldTimer--;
-                } else {
-                    stylusRepeat = true;
-                }
-                if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//TOUCH EN SURFACE
-                    int localX = touch.px - SURFACE_X;
-                    int localY = touch.py;
-
-                    int srcX = subSurfaceXoffset + (localX >> subSurfaceZoom);
-                    int srcY = subSurfaceYoffset + (localY >> subSurfaceZoom);
-
-                    if(srcY < 1<<surfaceYres)//comprobar si está en el rango
+                    if(kDown & KEY_DOWN)
                     {
-                        // --- ejecutar la herramienta seleccionada ---
-                        applyTool(srcX, srcY, stylusPressed);
-
-                        prevtpx = srcX;
-                        prevtpy = srcY;
-
-                        drawSurfaceMain(false);
-                        drawSurfaceBottom();
-                        drew = true;
-                        stylusPressed = true;
+                        updatePal(16, &palettePos);
+                        goto frameEnd;
+                    }
+                    if(kDown & KEY_UP)
+                    {
+                        updatePal(-16, &palettePos);
+                        goto frameEnd;
+                    }
+                    if(kDown & KEY_LEFT)
+                    {
+                        updatePal(-1, &palettePos);
+                        goto frameEnd;
+                    }
+                    if(kDown & KEY_RIGHT)
+                    {
+                        updatePal(1, &palettePos);
                         goto frameEnd;
                     }
                 }
-                if(touch.px < 64)//apunta a la parte izquierda
-                {
-                    if(touch.px < 48 && touch.py > 16 && touch.py < 64 && stylusPressed == false)//herramientas
-                    {
-                        if(showBrushSettings && touch.px >= 16 && touch.px < 48 && touch.py >= 32 && touch.py < 48){//si está en modo configurar brush
-                            int col = (touch.px - 16)>>3;
-                            int row = (touch.py - 32)>>3;
-                            stylusPressed = true;
-                            switch(row){
-                                case 0://patrones
-                                    brushMode = (BrushMode)col;
-                                break;
-
-                                case 1://tamaños
-                                    brushSize = (BrushSize)col;
-                                break;
-                            }
-                            setBrushSettingsSprites(true);
-                            goto frameEnd;
-                        }
-                        int col = touch.px > 24 ? 1 : 0;
-                        int row = touch.py > 40 ? 2 : 0;
-                        //convertir col+row a un valor único
-                        currentTool = (ToolType)(row + col);
-                        if(currentTool == TOOL_BRUSH){
-                            setBrushSettingsSprites(true);
-                        }else{
-                            setBrushSettingsSprites(false);
-                        }
-                        //además dibujamos un contorno en dónde seleccionamos
-                        oamSetXY(&oamSub,selector24oamID,col*24, (row*12)+16);
-                        stylusPressed = true;
-                        goto frameEnd;
+                if(kDown & KEY_R || kDown & KEY_Y){
+                    showGrid = !showGrid;
+                    drawSurfaceBottom();
+                    goto frameEnd;
+                }
+                //===========================================PALETAS=========================================================
+                palettePos = palettePos & (paletteSize-1);//mantiene la paleta dentro de un límite
+                if(palettePos < 0){palettePos = 0;}
+                //recordar que debo hacer cambios dependiendo del bpp
+                if (kHeld & KEY_TOUCH) {
+                    if (stylusHoldTimer > 0) {
+                        stylusHoldTimer--;
+                    } else {
+                        stylusRepeat = true;
                     }
-                    else//apunta a otra parte de la izquierda
-                    {
-                        if(touch.py < 16 && stylusPressed == false){//iconos de la parte superior
-                            int selected = touch.px>>4;
-                            fname[0] = '\0';//quitar nombre reciente :>
-                            //actualizar input para que la pantalla también lo haga
-                            kDown = kDown | KEY_TOUCH;
-                            switch(selected)
-                            {
-                                case 0: //load file
-                                    textMode();
-                                    currentConsoleMode = LOAD_file;
-                                    textKeyboardDraw();
-                                goto textConsole;
-                                case 1: //New file
-                                    textMode();
-                                    currentConsoleMode = MODE_NEWIMAGE;
-                                    decompress(GFXnewImageInputBitmap, BG_GFX_SUB, LZ77Vram);
-                                goto textConsole;
+                    if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//TOUCH EN SURFACE
+                        int localX = touch.px - SURFACE_X;
+                        int localY = touch.py;
 
-                                case 2:// Save file
-                                    textMode();
-                                    currentConsoleMode = SAVE_file;
-                                    textKeyboardDraw();
-                                goto textConsole;
+                        int srcX = subSurfaceXoffset + (localX >> subSurfaceZoom);
+                        int srcY = subSurfaceYoffset + (localY >> subSurfaceZoom);
 
-                                //PLACEHOLDER el caso 3 está libre por ahora :> (pienso usarlo para configuración en un futuro)
-                            }
-                        }
-                        //botones del costado derecho en la izquierda
-                        else if(touch.px >= 48 && touch.py < 64 && stylusPressed == false){
-                            int selected = touch.py>>4;
-                            switch(selected)//puro hardcode lol
-                            {
-                                case 1://Copy
-                                    copyFromSurfaceToStack();
-                                break;
-                                case 2://cut
-                                    cutFromSurfaceToStack();
-                                    drawSurfaceMain(false);drawSurfaceBottom();
-                                break;
-                                case 3://Paste
-                                    pasteFromStackToSurface();
-                                    drawSurfaceMain(true);drawSurfaceBottom();
-                                break;
-                            }
-                            stylusPressed = true;
-                            goto frameEnd;
-                        }
-                        if(touch.py >= 64 && stylusPressed == false)//revisar botones inferiores
+                        if(srcY < 1<<surfaceYres)//comprobar si está en el rango
                         {
-                            //hardcodeado porque lol
-                            int selected = touch.px>>4;
-                            selected += ((touch.py-64)>>4)<<2;
+                            // --- ejecutar la herramienta seleccionada ---
+                            applyTool(srcX, srcY, stylusPressed);
+
+                            prevtpx = srcX;
+                            prevtpy = srcY;
+
+                            drawSurfaceMain(false);
+                            drawSurfaceBottom();
+                            drew = true;
                             stylusPressed = true;
-                            switch(selected)
-                            {
-                                case 0://rotate -90°
-                                    rotateNegative();
-                                    drawSurfaceMain(false);drawSurfaceBottom();
-                                goto frameEnd;
-
-                                case 1://rotate 90°
-                                    rotatePositive();
-                                    drawSurfaceMain(false);drawSurfaceBottom();
-                                goto frameEnd;
-
-                                case 2:
-                                    flipV();
-                                    drawSurfaceMain(false);drawSurfaceBottom();
-                                goto frameEnd;
-
-                                case 3:
-                                    flipH();
-                                    drawSurfaceMain(false);drawSurfaceBottom();
-                                goto frameEnd;
-
-                                case 6:
-                                    //verificar si es posible escalar
-                                    scaleUp();
-                                    drawSurfaceMain(true);drawSurfaceBottom();
-                                goto frameEnd;
-
-                                case 7:
-                                    scaleDown();
-                                    drawSurfaceMain(false);drawSurfaceBottom();
-                                goto frameEnd;
-
-                                case 24: // Page UP
-                                case 25: // Page DOWN
-                                {
-                                    if(usesPages){
-                                        saveFile(imgFormat, currentFilePath, palette, surface);
-
-                                        int dir = (selected == 24) ? -1 : +1;
-                                        fileOffset += dir * (paletteBpp << 11);
-
-                                        loadFile(imgFormat, currentFilePath, palette, surface);
-                                        drawSurfaceMain(true);
-                                        drawSurfaceBottom();
-                                        accurate = true;
-                                    }
-                                }
-                                goto frameEnd;
-
-
-                                case 26: //undo
-                                    backupIndex--;
-                                    if(backupIndex < 0){
-                                        backupIndex = backupMax;
-                                    }
-                                    backupRead();
-                                    drawSurfaceMain(true);drawSurfaceBottom();
-                                goto frameEnd;
-                                
-                                case 27: //redo
-                                    backupIndex++;
-                                    if(backupIndex > backupMax){
-                                        backupIndex = 0;
-                                    }
-                                    backupRead();
-                                    drawSurfaceMain(true);drawSurfaceBottom();
-                                goto frameEnd;
-
-                            }
-                        }
-                    }
-                }
-
-                //zona de paletas y otras configuraciones
-                if(touch.px >= 192)//apunta a la parte derecha
-                {
-                    if (touch.py < 32 && (stylusPressed == false || stylusRepeat == true)) { // botones superiores
-                        int col = (touch.px - 192) >> 4;   // 0..3
-                        int row = touch.py >> 4;           // 0..1
-                        if ((unsigned)col < 4 && (unsigned)row < 2) {
-                            int button = (row << 2) | col; // 0..7
-                            actions |= getActionsFromTouch(button);
-                        }
-                        stylusPressed = true;
-                        goto frameEnd;
-                    }
-                    if(touch.py < 40 && touch.py > 32 && paletteBpp == 16){//transparencia
-                        paletteAlpha = (touch.px-192);
-
-                        AVdrawRectangle(pixels,192,63,32,8,palette[palettePos]);
-                        //Limpiar el area
-                        AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
-                        updated = true;
-                        goto frameEnd;
-                    }
-                    else if(touch.py >= 40 && touch.py < 64)//creador de colores
-                    {
-                        //hay mucho código hardcodeado aquí para mejorar el rendimiento
-                        if(nesMode){
-                            int ystart = 48;
-                            int row = (touch.px-192)>>2;
-                            int col = (touch.py-ystart)>>2;
-                            int index = (col<<4)+row;
-
-                            u16 _col = nesPalette[index];
-                            AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
-                            drawSurfaceMain(true);drawSurfaceBottom();
-
-                            palette[palettePos] = _col;
-                            //dibujar el contorno del color seleccionado
-                            _col = AVinvertColor(_col);
-                            AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                             goto frameEnd;
+                        }
+                    }
+                    if(touch.px < 64)//apunta a la parte izquierda
+                    {
+                        if(touch.px < 48 && touch.py > 16 && touch.py < 64 && stylusPressed == false)//herramientas
+                        {
+                            if(showBrushSettings && touch.px >= 16 && touch.px < 48 && touch.py >= 32 && touch.py < 48){//si está en modo configurar brush
+                                int col = (touch.px - 16)>>3;
+                                int row = (touch.py - 32)>>3;
+                                stylusPressed = true;
+                                switch(row){
+                                    case 0://patrones
+                                        brushMode = (BrushMode)col;
+                                    break;
 
-                        }else{
-                            int index = (touch.py-40)>>3;
-                            int amount = (touch.px-192)>>1;
-                            palEdit[index] = amount;
-
-                            //actualizar barra
-                            u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
-                            AVdrawRectangle(pixels,192,amount<<1,(index<<3)+40,8,_barCol[index]);
-                            //Limpiar el area
-                            AVdrawRectangle(pixels,192+(amount<<1),64-(amount<<1),(index<<3)+40,8,C_BLACK);
-
-                            //actualizar el color
-                            u16 _col = palEdit[0];
-                            _col += palEdit[1]<<5;
-                            _col += palEdit[2]<<10;
-                            _col += 32768;//encender pixel
-                            palette[palettePos] = _col;
-                            
-                            AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
-
-                            if(paletteBpp != 16){//Solo actualizar en modo index
-                                drawSurfaceMain(true);
-                                drawSurfaceBottom();
-                                //dibujar arriba el nuevo color generado
-                                AVdrawRectangle(pixels,192,64,32,8,_col);
+                                    case 1://tamaños
+                                        brushSize = (BrushSize)col;
+                                    break;
+                                }
+                                setBrushSettingsSprites(true);
+                                goto frameEnd;
+                            }
+                            int col = touch.px > 24 ? 1 : 0;
+                            int row = touch.py > 40 ? 2 : 0;
+                            //convertir col+row a un valor único
+                            currentTool = (ToolType)(row + col);
+                            if(currentTool == TOOL_BRUSH){
+                                setBrushSettingsSprites(true);
                             }else{
-                                updated = true;
-                                //color seleccionado/alpha
-                                AVdrawRectangle(pixels,192,63,32,8,_col);
-                                AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,C_BLACK);
-                                if(palettePos == 0 && showGrid == true){
-                                    drawGrid(AVinvertColor(_col));
+                                setBrushSettingsSprites(false);
+                            }
+                            //además dibujamos un contorno en dónde seleccionamos
+                            oamSetXY(&oamSub,selector24oamID,col*24, (row*12)+16);
+                            stylusPressed = true;
+                            goto frameEnd;
+                        }
+                        else//apunta a otra parte de la izquierda
+                        {
+                            if(touch.py < 16 && stylusPressed == false){//iconos de la parte superior
+                                int selected = touch.px>>4;
+                                fname[0] = '\0';//quitar nombre reciente :>
+                                //actualizar input para que la pantalla también lo haga
+                                kDown = kDown | KEY_TOUCH;
+                                switch(selected)
+                                {
+                                    case 0: //load file
+                                        textMode();
+                                        currentConsoleMode = LOAD_file;
+                                        textKeyboardDraw();
+                                    goto textConsole;
+                                    case 1: //New file
+                                        textMode();
+                                        currentConsoleMode = MODE_NEWIMAGE;
+                                        decompress(GFXnewImageInputBitmap, BG_GFX_SUB, LZ77Vram);
+                                    goto textConsole;
+
+                                    case 2:// Save file
+                                        textMode();
+                                        currentConsoleMode = SAVE_file;
+                                        textKeyboardDraw();
+                                    goto textConsole;
+
+                                    //PLACEHOLDER el caso 3 está libre por ahora :> (pienso usarlo para configuración en un futuro)
                                 }
                             }
+                            //botones del costado derecho en la izquierda
+                            else if(touch.px >= 48 && touch.py < 64 && stylusPressed == false){
+                                int selected = touch.py>>4;
+                                switch(selected)//puro hardcode lol
+                                {
+                                    case 1://Copy
+                                        copyFromSurfaceToStack();
+                                    break;
+                                    case 2://cut
+                                        cutFromSurfaceToStack();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    break;
+                                    case 3://Paste
+                                        pasteFromStackToSurface();
+                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                    break;
+                                }
+                                stylusPressed = true;
+                                goto frameEnd;
+                            }
+                            if(touch.py >= 64 && stylusPressed == false)//revisar botones inferiores
+                            {
+                                //hardcodeado porque lol
+                                int selected = touch.px>>4;
+                                selected += ((touch.py-64)>>4)<<2;
+                                stylusPressed = true;
+                                switch(selected)
+                                {
+                                    case 0://rotate -90°
+                                        rotateNegative();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
 
-                            //dibujar el contorno del color seleccionado
-                            _col = AVinvertColor(_col);
-                            AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                                    case 1://rotate 90°
+                                        rotatePositive();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 2:
+                                        flipV();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 3:
+                                        flipH();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 6:
+                                        //verificar si es posible escalar
+                                        scaleUp();
+                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 7:
+                                        scaleDown();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 8:
+                                        shiftLeftWrap();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 9:
+                                        shiftRightWrap();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 10:
+                                        shiftUpWrap();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 11:
+                                        shiftDownWrap();
+                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                    case 24: // Page UP
+                                    case 25: // Page DOWN
+                                    {
+                                        if(usesPages){
+                                            saveFile(imgFormat, currentFilePath, palette, surface);
+
+                                            int dir = (selected == 24) ? -1 : +1;
+                                            fileOffset += dir * (paletteBpp << 11);
+
+                                            loadFile(imgFormat, currentFilePath, palette, surface);
+                                            drawSurfaceMain(true);
+                                            drawSurfaceBottom();
+                                            accurate = true;
+                                        }
+                                    }
+                                    goto frameEnd;
+
+
+                                    case 26: //undo
+                                        backupIndex--;
+                                        if(backupIndex < 0){
+                                            backupIndex = backupMax;
+                                        }
+                                        backupRead();
+                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                    goto frameEnd;
+                                    
+                                    case 27: //redo
+                                        backupIndex++;
+                                        if(backupIndex > backupMax){
+                                            backupIndex = 0;
+                                        }
+                                        backupRead();
+                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                    goto frameEnd;
+
+                                }
+                            }
+                        }
+                    }
+                    //zona de paletas y otras configuraciones
+                    if(touch.px >= 192)//apunta a la parte derecha
+                    {
+                        if (touch.py < 32 && (stylusPressed == false || stylusRepeat == true)) { // botones superiores
+                            int col = (touch.px - 192) >> 4;   // 0..3
+                            int row = touch.py >> 4;           // 0..1
+                            if ((unsigned)col < 4 && (unsigned)row < 2) {
+                                int button = (row << 2) | col; // 0..7
+                                actions |= getActionsFromTouch(button);
+                            }
+                            stylusPressed = true;
+                            goto frameEnd;
+                        }
+                        if(touch.py < 40 && touch.py > 32 && paletteBpp == 16){//transparencia
+                            paletteAlpha = (touch.px-192);
+
+                            AVdrawRectangle(pixels,192,63,32,8,palette[palettePos]);
+                            //Limpiar el area
+                            AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
+                            updated = true;
+                            goto frameEnd;
+                        }
+                        else if(touch.py >= 40 && touch.py < 64)//creador de colores
+                        {
+                            //hay mucho código hardcodeado aquí para mejorar el rendimiento
+                            if(nesMode){
+                                int ystart = 48;
+                                int row = (touch.px-192)>>2;
+                                int col = (touch.py-ystart)>>2;
+                                int index = (col<<4)+row;
+
+                                u16 _col = nesPalette[index];
+                                AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                                drawSurfaceMain(true);drawSurfaceBottom();
+
+                                palette[palettePos] = _col;
+                                //dibujar el contorno del color seleccionado
+                                _col = AVinvertColor(_col);
+                                AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                                goto frameEnd;
+
+                            }else{
+                                int index = (touch.py-40)>>3;
+                                int amount = (touch.px-192)>>1;
+                                palEdit[index] = amount;
+
+                                //actualizar barra
+                                u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
+                                AVdrawRectangle(pixels,192,amount<<1,(index<<3)+40,8,_barCol[index]);
+                                //Limpiar el area
+                                AVdrawRectangle(pixels,192+(amount<<1),64-(amount<<1),(index<<3)+40,8,C_BLACK);
+
+                                //actualizar el color
+                                u16 _col = palEdit[0];
+                                _col += palEdit[1]<<5;
+                                _col += palEdit[2]<<10;
+                                _col += 32768;//encender pixel
+                                palette[palettePos] = _col;
+                                
+                                AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+
+                                if(paletteBpp != 16){//Solo actualizar en modo index
+                                    drawSurfaceMain(true);
+                                    drawSurfaceBottom();
+                                    //dibujar arriba el nuevo color generado
+                                    AVdrawRectangle(pixels,192,64,32,8,_col);
+                                }else{
+                                    updated = true;
+                                    //color seleccionado/alpha
+                                    AVdrawRectangle(pixels,192,63,32,8,_col);
+                                    AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,C_BLACK);
+                                    if(palettePos == 0 && showGrid == true){
+                                        drawGrid(AVinvertColor(_col));
+                                    }
+                                }
+
+                                //dibujar el contorno del color seleccionado
+                                _col = AVinvertColor(_col);
+                                AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                                goto frameEnd;
+                            }
+                        }
+                        else//seleccionar un color en la paleta
+                        {
+                            if(stylusPressed == false)
+                            {
+                                int row = (touch.py-64)>>2;
+                                int col = (touch.px-192)>>2;
+
+                                updatePal(((row<<4)+col)-palettePos,&palettePos);   
+                                stylusPressed = true;
+                            }
                             goto frameEnd;
                         }
                     }
-                    else//seleccionar un color en la paleta
-                    {
-                        if(stylusPressed == false)
-                        {
-                            int row = (touch.py-64)>>2;
-                            int col = (touch.px-192)>>2;
-
-                            updatePal(((row<<4)+col)-palettePos,&palettePos);   
-                            stylusPressed = true;
-                        }
-                        goto frameEnd;
-                    }
                 }
+                else{
+                    stylusPressed = false;
+                }
+
+                frameEnd://finalizar el frame del modo bitmap
+
+                if(kUp & KEY_TOUCH && drew == true){
+                    drew = false;
+                    backupWrite();
+                }
+                if (actions != ACTION_NONE) {
+                    applyActions(actions);
+                    drawSurfaceBottom();
+                }
+                //implementación del modo reposo para ahorrar energía
+                for(int i = 0; i<sleepingFrames; i++){
+                    swiWaitForVBlank();
+                }
+                if(sleepTimer < 0 && sleepingFrames < 4){
+                    sleepingFrames++;
+                    sleepTimer = (60*(sleepingFrames<<2));//cada vez le toma más frames dormirse
+                }
+                if(updated){//llamar a submitVRAM solo si se modificó algo visual
+                    submitVRAM(true,accurate,both);
+                    sleepTimer = 60;
+                    sleepingFrames = 1;
+                }
+                sleepTimer--;
+                updated = false;
+                accurate = false;
+                both = false;
+                //fin del loop de modo bitmap (pantalla de abajo)
             }
             else{
-                stylusPressed = false;
-            }
 
-            frameEnd://finalizar el frame del modo bitmap
-
-            if(kUp & KEY_TOUCH && drew == true){
-                drew = false;
-                backupWrite();
             }
-            if (actions != ACTION_NONE) {
-                applyActions(actions);
-                drawSurfaceBottom();
-            }
-            //implementación del modo reposo para ahorrar energía
-            for(int i = 0; i<sleepingFrames; i++){
-                swiWaitForVBlank();
-            }
-            if(sleepTimer < 0 && sleepingFrames < 4){
-                sleepingFrames++;
-                sleepTimer = (60*(sleepingFrames<<2));//cada vez le toma más frames dormirse
-            }
-            if(updated){//llamar a submitVRAM solo si se modificó algo visual
-                submitVRAM(true,accurate,both);
-                sleepTimer = 60;
-                sleepingFrames = 1;
-            }
-            sleepTimer--;
-            updated = false;
-            accurate = false;
-            both = false;
-            //fin del loop de modo bitmap
         }
         else//=======================================CONSOLA DE TEXTO=======================================>
         {

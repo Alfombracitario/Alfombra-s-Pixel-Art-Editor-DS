@@ -1662,7 +1662,6 @@ void importACS(const char* path, u16* surface){
 void exportACS(const char* path, u16* surface){
     //agregar los otros comandos de exportación
 
-
     // revisar si la imagen es válida (solo aplica a esta app)
     if(surfaceXres < 2 || surfaceXres >= 8){ return; }
     if(surfaceYres < 2 || surfaceYres >= 8){ return; }
