@@ -1242,8 +1242,8 @@ int getActionsFromTouch(int button) {
             drawSurfaceBottom();
         break;
         case 7:
-            screensSwapped = true;
-            lcdSwap();
+            //screensSwapped = true;
+            //lcdSwap();
         break;
     }
     return actions;
@@ -1921,8 +1921,6 @@ int main(void) {
         kUp = keysUp();
         touchRead(&touch);
         int actions = ACTION_NONE;
-
-        screensSwapped = false;//PLACEHOLDER
 
         if(currentSubMode == SUB_BITMAP)
         {   
