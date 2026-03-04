@@ -109,6 +109,7 @@ u16 palette[256];
 
 u16 stack[16384];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
+
 u8 paletteAlpha = MAX_ALPHA;//indicador del alpha actual, útil para 16bpp
 //ideal añadir un array para guardar más frames
 
@@ -501,7 +502,7 @@ inline void drawPixelSurfaceAlpha(int x, int y, u16 color)
        brushPatternPass(x, y, brushMode))
     {
         int index = (y << surfaceXres)+x;
-        surface[index] = mergeColorAlpha(color,surface[index],paletteAlpha);
+        surface[index] = mergeColorAlpha(surface[index],color,paletteAlpha);
     }
 }
 inline void brushStamp2(int x,int y,u16 color)
@@ -851,7 +852,7 @@ void updatePal(int increment, int *palettePos)
             AVdrawRectangle(pixels,192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
         }
 
-        AVdrawRectangle(pixels,192,64,32,8,_col);//rectángulo de arriba (color mezclado)
+        AVdrawRectangle(pixels,192,paletteAlpha,32,8,_col);//rectángulo de arriba (color mezclado)
     }
 
     //obtenemos la coordenada de la paleta (otra vez)
@@ -2247,7 +2248,7 @@ int main(void) {
                                     updated = true;
                                     //color seleccionado/alpha
                                     AVdrawRectangle(pixels,192,63,32,8,_col);
-                                    AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,C_BLACK);
+                                    AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
                                     if(palettePos == 0 && showGrid == true){
                                         drawGrid(AVinvertColor(_col));
                                     }
