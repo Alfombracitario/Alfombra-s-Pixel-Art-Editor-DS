@@ -12,6 +12,7 @@
 #include <nds.h>
 #include <stdio.h>
 #include <math.h>
+#include "lodepng.h"
 #include "formats.h"
 
 #define min(a,b) ((a)<(b)?(a):(b))
@@ -1240,7 +1241,22 @@ int exportSNES8bpp(const char* path, u16* surface, int height) {
 
     return (int)written;
 }
-
+static const u8 log2Lut[129] = {
+//  0     1     2     3     4     5     6     7     8     9
+    0xFF, 0,    1,    1,    2,    2,    2,    2,    3,    3,  // 0-9
+    3,    3,    3,    3,    3,    3,    4,    4,    4,    4,  // 10-19
+    4,    4,    4,    4,    4,    4,    4,    4,    4,    4,  // 20-29
+    4,    4,    5,    5,    5,    5,    5,    5,    5,    5,  // 30-39
+    5,    5,    5,    5,    5,    5,    5,    5,    5,    5,  // 40-49
+    5,    5,    5,    5,    5,    5,    5,    5,    5,    5,  // 50-59
+    5,    5,    5,    5,    6,    6,    6,    6,    6,    6,  // 60-69
+    6,    6,    6,    6,    6,    6,    6,    6,    6,    6,  // 70-79
+    6,    6,    6,    6,    6,    6,    6,    6,    6,    6,  // 80-89
+    6,    6,    6,    6,    6,    6,    6,    6,    6,    6,  // 90-99
+    6,    6,    6,    6,    6,    6,    6,    6,    6,    6,  // 100-109
+    6,    6,    6,    6,    6,    6,    6,    6,    6,    6,  // 110-119
+    6,    6,    6,    6,    6,    6,    6,    6,    7,        // 120-128
+};
 //advertencia, estos importadores y exportadores de ACS están optimizados específicamente para este editor de pixel art,
 //ACS es un poco más complejo,
 //pero simplemente ignoré ciertos aspectos para que encaje en el hardware de la DS y la estructura de este editor de pixelart
@@ -1362,294 +1378,314 @@ inline void readCommand8(u8 byte, int* pInd, u16* surface){
     }
 }
 void importACS(const char* path, u16* surface){
+
+    //usamos backup para leer el archivo en RAM
     u8* data = (u8*)backup;
 
-    // abrir archivo
     FILE* f = fopen(path, "rb");
-    if(!f){
-        return;
-    }
+    if(!f) return;
 
-    // obtener tamaño del archivo
     fseek(f, 0, SEEK_END);
     size_t size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    // asegurarse que cabe en backup
-    if(size > sizeof(backup)){
-        fclose(f);
-        return;
-    }
+    if(size > sizeof(backup)){ fclose(f); return; }
 
-    // leer archivo dentro de backup[]
     fread(data, 1, size, f);
     fclose(f);
 
-    //comprobar si se ha abierto un archivo válido
-    u8 val = data[0];
-    if(val != 1){return;}//archivo ACS con compresión, modo imagen y versión 0
+    // ---------- byte 0: version y otros datos ----------
+    if(data[0] != 1) return;//hardcodeado por ahora
 
     memset(surface, 0, 32768);
-    
+
     int ind = 1;
-    int resTable[16] = {0,4,8,16,24,32,48,64,96,128,192,256,320,512,1024,-1};
-    val = data[ind++];
-    
-    int resX = resTable[val>>4];
+
+    // ---------- byte 1: resolución ----------
+    static const int resTable[16] = {
+        0,4,8,16,24,32,48,64,96,128,192,256,320,512,1024,-1
+    };
+
+    u8 val = data[ind++];
+    int resX = resTable[val >> 4];
     int resY = resTable[val & 0xF];
 
-    if(resX == -1){
-        resX = (data[ind++]<<8) | data[ind++];
-    }
-    if(resY == -1){
-        resY = (data[ind++]<<8) | data[ind++];
-    }
+    if(resX == -1){ resX = (data[ind]<<8) | data[ind+1]; ind+=2; }
+    if(resY == -1){ resY = (data[ind]<<8) | data[ind+1]; ind+=2; }
 
-    //aplicar la resolución a la imagen que se está cargando
-    surfaceXres = log2(resX);
-    surfaceYres = log2(resY);
+    if(resX > 128 || resY > 128) return;
 
-    u32 imgRes = resX*resY;
+    surfaceXres = log2Lut[resX];
+    surfaceYres = log2Lut[resY];
 
-    //leer el tercer encabezado (byte 0x02)
+    u32 imgRes = (u32)resX * (u32)resY;
+
+    // ---------- byte 2: bpp + colorMode ----------
     val = data[ind++];
-    u8 bpp = val>>6;//últimos dos bits
-    
-    paletteBpp = (1<<(bpp & 0b11));//almacenar a palette bpp en su formato
+    u8 bpp       = val >> 6;
+    paletteBpp   = 1 << (bpp & 0b11);
+    u8 colorMode = (val >> 3) & 0b111;
+    if(colorMode > ACStotalModes) return;
 
-    u8 colorMode = (val>>3) & 0b111;//colorMode
-    if(colorMode > ACStotalModes){return;}//no es un formato soportado por este lector
-
-    //leemos el colorCount
+    // ---------- colorCount ----------
     int colorCount = data[ind++];
 
-    if(colorCount > 0){//lector en modo indexeado
+    //  MODO INDEXADO
+    if(colorCount > 0){
+
+        // --- leer paleta ---
         switch(colorMode){
+
             case ACScolModeARGB1555:
                 for(int i = 0; i <= colorCount; i++){
-                    palette[i] = (data[ind++]<<8) | data[ind++];//ACS usa el mismo formato que la DS y la SNES en color
+                    palette[i] = ((u16)data[ind] << 8) | data[ind+1];
+                    ind += 2;
                 }
             break;
 
             case ACScolModeARGB8888:
-                for(int i = 0; i <= colorCount; i++){//proceso un poco más lento porque debe adaptarse
-                    u8 a = data[ind++]>>7;
-                    u8 r = data[ind++]>>3;
-                    u8 g = data[ind++]>>3;
-                    u8 b = data[ind++]>>3;
-                    palette[i] = (a<<15)|(r<<10)|(g<<5)|(b);
+                for(int i = 0; i <= colorCount; i++){
+                    u8 a = data[ind++] >> 7;
+                    u8 r = data[ind++] >> 3;
+                    u8 g = data[ind++] >> 3;
+                    u8 b = data[ind++] >> 3;
+                    palette[i] = (u16)((a<<15)|(r<<10)|(g<<5)|b);
                 }
             break;
 
             case ACScolModeGrayScale4:
-                for(int i = 0; i <= colorCount; i++){//proceso un poco más lento porque debe adaptarse
-                    u8 val = data[ind++];
-                    
-                    u8 hi = (val & 0xF0)>>3;
-                    u8 lo = (val & 0x0F)<<1;
+                for(int i = 0; i <= colorCount; i++){
+                    u8 v  = data[ind++];
+                    u8 hi = (v & 0xF0) >> 3;
+                    u8 lo = (v & 0x0F) << 1;
                     palette[i++] = 0x8000 | (hi<<10) | (hi<<5) | hi;
-
-                    if(i >= colorCount){break;}//comprobar si aún quedan colores por escribir
-                    palette[i] = 0x8000 | (lo<<10) | (lo<<5) | lo;
+                    if(i >= colorCount) break;
+                    palette[i]   = 0x8000 | (lo<<10) | (lo<<5) | lo;
                 }
             break;
 
             case ACScolModeGrayScale8:
                 for(int i = 0; i <= colorCount; i++){
-                    u8 val = data[ind++]>>3;
-                    palette[i] = 0x8000 | (val<<10) | (val<<5) | val;
+                    u8 v = data[ind++] >> 3;
+                    palette[i] = 0x8000 | (u16)((v<<10)|(v<<5)|v);
                 }
             break;
 
             case ACScolModeRGB888:
                 for(int i = 0; i <= colorCount; i++){
-                    u8 r = data[ind++]>>3;
-                    u8 g = data[ind++]>>3;
-                    u8 b = data[ind++]>>3;
-
-                    palette[i] = 0x8000 | (r<<10) | (g<<5) | b;
+                    u8 r = data[ind++] >> 3;
+                    u8 g = data[ind++] >> 3;
+                    u8 b = data[ind++] >> 3;
+                    palette[i] = 0x8000 | (u16)((r<<10)|(g<<5)|b);
                 }
             break;
         }
 
-        //se terminó de leer los colores
-        if(resX == 0 || resY == 0){return;}//existe un modo oculto de solo paleta, así que ya podemos salir de acá
-        //ya que estamos en el modo index, debemos leer los byte controls y esas cosas
-        int ByteCtrlCout = (data[ind++]<<8)|data[ind++];
-        int CommandsCount = (data[ind++]<<8)|data[ind++];
-        int Bind = ind;//indice del bytecontrol
-        int cInd = ind+ByteCtrlCout;
+        // modo oculto solo-paleta
+        if(resX == 0 || resY == 0) return;
+
+        // --- cabecera de control ---
+        int ByteCtrlCount  = ((int)data[ind]<<8) | data[ind+1]; ind+=2;
+        int CommandsCount  = ((int)data[ind]<<8) | data[ind+1]; ind+=2;
+
+        const u8* ctrlBase = data + ind;           // puntero fijo al bloque de control
+        const u8* cmdBase  = data + ind + ByteCtrlCount; // puntero fijo al bloque de comandos
+        ind += ByteCtrlCount + CommandsCount;       // ind apunta ahora a los datos de píxel
+
+        // punteros de lectura independientes — evita recalcular offsets cada vez
+        const u8* pixPtr  = data + ind;
+        const u8* cmdPtr  = cmdBase;
         int ctrlPos = 0;
-        ind += (ByteCtrlCout+CommandsCount);
-        //la cantidad de pixeles se asume
+        int pInd    = 0;
+        u8  part    = 0;
 
-        //FIN DEL HEADER
-        
-        //variables globales
-        int pInd = 0;//indice de pixel
-        u8 part = 0;
-        // --------------------------------- LEER TODOS LOS DATOS DE LOS PIXELES ---------------------------------- |
+        //  HOT LOOP — bit de control desempaquetado de a 8 bits
+        //  para reducir las divisiones/módulos por iteración.
+        #define CTRL_BIT() \
+            (( ctrlBase[ctrlPos >> 3] >> (7 - (ctrlPos & 7)) ) & 1)
+
         switch(bpp){
-            case 3:  // --------------------------- 8 BPP --------------------------------
-                while(pInd < imgRes){
-                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
-                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
-                    ctrlPos++;
 
-                    if(bit == 0){
-                        // leer índice directo
-                        surface[pInd++] = data[ind++];//surface está en modo index
+            // -------- 8 BPP --------
+            case 3:
+                while(pInd < (int)imgRes){
+                    // desempaquetar el byte de control actual completo
+                    u8 ctrl = ctrlBase[ctrlPos >> 3];
+                    int startBit = ctrlPos & 7;
+                    int bitsLeft = 8 - startBit;
+                    int pixLeft  = (int)imgRes - pInd;
+                    int n = bitsLeft < pixLeft ? bitsLeft : pixLeft;
+
+                    u8 mask = 0x80 >> startBit;
+                    for(int b = 0; b < n; b++, mask >>= 1){
+                        if(ctrl & mask){
+                            readCommand8(*cmdPtr++, &pInd, surface);
+                        } else {
+                            surface[pInd++] = *pixPtr++;
+                        }
                     }
-                    else{//el bit es un comando!
-                        readCommand8(data[cInd++], &pInd, surface);//avanzamos uno en el lector de comandos
-                    }
+                    ctrlPos += n;
                 }
             break;
 
-            case 2:  // --------------------------- 4 BPP --------------------------------
-                while(pInd < imgRes){
-                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
-                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
-                    ctrlPos++;
+            // -------- 4 BPP --------
+            case 2:
+                while(pInd < (int)imgRes){
+                    u8 ctrl = ctrlBase[ctrlPos >> 3];
+                    int startBit = ctrlPos & 7;
+                    int bitsLeft = 8 - startBit;
+                    int pixLeft  = (int)imgRes - pInd;
+                    int n = bitsLeft < pixLeft ? bitsLeft : pixLeft;
 
-                    //ind es para leer pixeles desde data
-                    //pInd es para escribir pixeles en surface
-                    if(bit == 0){
-                        // Leer nibble alto si pInd par, bajo si impar
-                        u8 raw = data[ind];
-                        u8 index;
-                        if(part == 0){index = raw >> 4; part++;}//hi nibble
-                        else{index = raw & 0x0F; ind++; part = 0;}//lo nibble
-                        surface[pInd++] = index;
+                    u8 mask = 0x80 >> startBit;
+                    for(int b = 0; b < n; b++, mask >>= 1){
+                        if(ctrl & mask){
+                            readCommand8(*cmdPtr++, &pInd, surface);
+                        } else {
+                            u8 raw = *pixPtr;
+                            u8 index;
+                            if(part == 0){ index = raw >> 4;   part = 1; }
+                            else         { index = raw & 0x0F; pixPtr++; part = 0; }
+                            surface[pInd++] = index;
+                        }
                     }
-                    else{
-                        readCommand8(data[cInd++], &pInd, surface);
-                    }
+                    ctrlPos += n;
                 }
             break;
 
-            case 1:  // --------------------------- 2 BPP --------------------------------
-                while(pInd < imgRes){
-                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
-                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
-                    ctrlPos++;
+            // -------- 2 BPP --------
+            case 1:
+                while(pInd < (int)imgRes){
+                    u8 ctrl = ctrlBase[ctrlPos >> 3];
+                    int startBit = ctrlPos & 7;
+                    int bitsLeft = 8 - startBit;
+                    int pixLeft  = (int)imgRes - pInd;
+                    int n = bitsLeft < pixLeft ? bitsLeft : pixLeft;
 
-                    if(bit == 0){
-                        // 4 píxeles por byte
-                        int shift = 6-(part<<1);part++;
-                        u8 index = (data[ind] >> shift) & 0b11;
-                        surface[pInd++] = index;
-                        if(shift == 0){ ind++; part = 0; } //solo avanzar un index si ya avanzamos un byte
+                    u8 mask = 0x80 >> startBit;
+                    for(int b = 0; b < n; b++, mask >>= 1){
+                        if(ctrl & mask){
+                            readCommand8(*cmdPtr++, &pInd, surface);
+                        } else {
+                            int shift = 6 - (part << 1);
+                            u8 index = (*pixPtr >> shift) & 0b11;
+                            surface[pInd++] = index;
+                            part++;
+                            if(shift == 0){ pixPtr++; part = 0; }
+                        }
                     }
-                    else{
-                        readCommand8(data[cInd++], &pInd, surface);
-                    }
+                    ctrlPos += n;
                 }
             break;
 
-            case 0:  // --------------------------- 1 BPP --------------------------------
-                while(pInd < imgRes){//sí, también hay compresión aquí aunque por lo general usaría más espacio
-                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
-                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
-                    ctrlPos++;
+            // -------- 1 BPP --------
+            case 0:
+                while(pInd < (int)imgRes){
+                    u8 ctrl = ctrlBase[ctrlPos >> 3];
+                    int startBit = ctrlPos & 7;
+                    int bitsLeft = 8 - startBit;
+                    int pixLeft  = (int)imgRes - pInd;
+                    int n = bitsLeft < pixLeft ? bitsLeft : pixLeft;
 
-                    if(bit == 0){
-                        // 8 píxeles por byte
-                        int shift = 7-(part);part++;
-                        u8 index = (data[ind] >> shift) & 1;
-                        surface[pInd++] = index;
-                        if(shift == 0){ ind++; part = 0; } //solo avanzar un index si ya avanzamos un byte
+                    u8 mask = 0x80 >> startBit;
+                    for(int b = 0; b < n; b++, mask >>= 1){
+                        if(ctrl & mask){
+                            readCommand8(*cmdPtr++, &pInd, surface);
+                        } else {
+                            int shift = 7 - part;
+                            u8 index = (*pixPtr >> shift) & 1;
+                            surface[pInd++] = index;
+                            part++;
+                            if(shift == 0){ pixPtr++; part = 0; }
+                        }
                     }
-                    else{
-                        readCommand8(data[cInd++], &pInd, surface);
-                    }
+                    ctrlPos += n;
                 }
             break;
         }
-    }else{// ------------------ LECTOR EN MODO DIRECTO!!111 -------------------
-        //forzar al modo 16bits
+
+        #undef CTRL_BIT
+
+    //  MODO DIRECTO
+    } else {
         paletteBpp = 16;
         int pInd = 0;
-        switch(colorMode)
-        {
-            //ind es el indice de LECTURA DEL BINARIO
-            case ACScolModeARGB1555://el mejor modo de todos (en mi opinión)
-                while(pInd < imgRes){//i siempre representará el indice de pixel en esta parte
+
+        switch(colorMode){
+
+            case ACScolModeARGB1555:
+                while(pInd < (int)imgRes){
                     u8 hi = data[ind++];
                     u8 lo = data[ind++];
-                    if(hi < 0x80){//puede ser un comando! (no tiene alpha)
-                        if((hi|lo) != 0){//es un comando!
+                    if(hi < 0x80){
+                        if((hi | lo) != 0){
                             readCommand7(hi, &pInd, surface);
-                            //este modo usa 2 bytes, ahora tenemos un byte impar
-                            //hay que repetir el proceso, pero haciendo un crimen: retrocedemos un ind
-                            ind--; continue;
-                        }
-                        else{//es un pixel transparente!
+                            ind--;
+                            continue;
+                        } else {
                             surface[pInd++] = 0;
                             continue;
                         }
                     }
-                    //si no era ni transparente ni comando, escribimos el color
-                    surface[pInd++] = (hi<<8)|lo;
+                    surface[pInd++] = ((u16)hi << 8) | lo;
                 }
             break;
 
             case ACScolModeARGB8888:
-                for(int i = 0; i<imgRes; i++){
-                    //el color debe ser convertido por limitaciones de hardware de la DS
-                    u8 a = data[ind++]>>7;
-                    u8 r = data[ind++]>>3;
-                    u8 g = data[ind++]>>3;
-                    u8 b = data[ind++]>>3;
-
-                    if(a == 0){//puede ser un comando!
-                        if((r|g|b) != 0){//es un comando!
-                            readCommand7(r,&i,surface);//R guarda el comando en este modo
-                            //retrocedemos el indice del lector binario (crimen!)
-                            ind-=2;continue;//partimos leyendo ahora desde G
-                        }
-                        else{//es un pixel transparente!
+                for(int i = 0; i < (int)imgRes; i++){
+                    u8 a = data[ind++] >> 7;
+                    u8 r = data[ind++] >> 3;
+                    u8 g = data[ind++] >> 3;
+                    u8 b = data[ind++] >> 3;
+                    if(a == 0){
+                        if((r | g | b) != 0){
+                            readCommand7(r, &i, surface);
+                            ind -= 2;
+                            continue;
+                        } else {
                             surface[i] = 0;
                             continue;
                         }
                     }
-                    //si no era ni transparente ni comando, escribimos el color
-                    surface[i] = (a<<15)|(r<<10)|(g<<5)|b;
+                    surface[i] = (u16)((a<<15)|(r<<10)|(g<<5)|b);
                 }
             break;
 
-            //estos casos tienen un comportamiento raro, usando control bytes pero su lectura es direct color.
-            case ACScolModeGrayScale4:{
-                //primero creamos la paleta de GrayScale4
+            case ACScolModeGrayScale4:
                 for(int i = 0; i < 16; i++){
-                    palette[i] = 0x8000|(i<<11)|(1<<6)|(1<<1);
+                    palette[i] = 0x8000 | (u16)((i<<11)|(1<<6)|(1<<1));
                 }
-                //luego asignamos los offsets para el correcto funcionamiento
-                
-                //luego usamos el mismo código de read indexed 4bpp
-            break;}
+            break;
 
             case ACScolModeGrayScale8:{
-                //primero creamos la paleta de GrayScale4
                 for(int i = 0; i < 32; i++){
-                    palette[i] = 0x8000|(i<<10)|(i<<5)|i;
+                    palette[i] = 0x8000 | (u16)((i<<10)|(i<<5)|i);
                 }
-                //offsets
-                int ByteCtrlCout = (data[ind++]<<8)|data[ind++];
-                int CommandsCount = (data[ind++]<<8)|data[ind++];
-                int Bind = ind;//indice del bytecontrol
-                int cInd = ind+ByteCtrlCout;
+
+                int ByteCtrlCount = ((int)data[ind]<<8) | data[ind+1]; ind+=2;
+                int CommandsCount = ((int)data[ind]<<8) | data[ind+1]; ind+=2;
+
+                const u8* ctrlBase = data + ind;
+                const u8* cmdPtr   = data + ind + ByteCtrlCount;
+                const u8* pixPtr   = data + ind + ByteCtrlCount + CommandsCount;
                 int ctrlPos = 0;
-                ind += (ByteCtrlCout+CommandsCount);
-                //código
-                while(pInd < imgRes){
-                    u8 ctrlByte = data[Bind + (ctrlPos >> 3)];
-                    u8 bit      = (ctrlByte >> (7 - (ctrlPos & 7))) & 1;
-                    ctrlPos++;
-                    if(bit == 0){
-                        //la surface tecnicamente está en modo index
-                        surface[pInd++] = data[ind++]>>3;
-                    }else{readCommand8(data[cInd++], &pInd, surface);}
+
+                while(pInd < (int)imgRes){
+                    u8 ctrl = ctrlBase[ctrlPos >> 3];
+                    int startBit = ctrlPos & 7;
+                    int bitsLeft = 8 - startBit;
+                    int pixLeft  = (int)imgRes - pInd;
+                    int n = bitsLeft < pixLeft ? bitsLeft : pixLeft;
+
+                    u8 mask = 0x80 >> startBit;
+                    for(int b = 0; b < n; b++, mask >>= 1){
+                        if(ctrl & mask){
+                            readCommand8(*cmdPtr++, &pInd, surface);
+                        } else {
+                            surface[pInd++] = *pixPtr++ >> 3;
+                        }
+                    }
+                    ctrlPos += n;
                 }
             break;}
 
@@ -1658,6 +1694,7 @@ void importACS(const char* path, u16* surface){
         }
     }
 }
+
 
 void exportACS(const char* path, u16* surface){
     //agregar los otros comandos de exportación
@@ -2068,4 +2105,172 @@ void exportACS(const char* path, u16* surface){
 
     fwrite(data, 1, finalSize, f);
     fclose(f);
+}
+
+// Smallest N where 2^N >= value  (result clamped to [0,7])
+static int ceilLog2(unsigned int v) {
+    int n = 0;
+    while ((1u << n) < v && n < 7) n++;
+    return n;
+}
+
+// ARGB1555 → RGBA8888
+static u32 argb1555_to_rgba8888(u16 c) {
+    // NDS ARGB1555: bit15=A, bits14-10=R, bits9-5=G, bits4-0=B
+    u8 a = (c >> 15) & 1  ? 255 : 0;
+    u8 r = ((c >> 10) & 0x1F) * 255 / 31;
+    u8 g = ((c >>  5) & 0x1F) * 255 / 31;
+    u8 b = ( c        & 0x1F) * 255 / 31;
+    return ((u32)b << 24) | ((u32)g << 16) | ((u32)r << 8) | a;
+}
+
+// RGBA8888 → ARGB1555
+static u16 rgba8888_to_argb1555(u8 r, u8 g, u8 b, u8 a) {
+    u16 A = (a >= 128) ? 1 : 0;
+    u16 R = (r * 31 + 127) / 255;
+    u16 G = (g * 31 + 127) / 255;
+    u16 B = (b * 31 + 127) / 255;
+    return (A << 15) | (B << 10) | (G << 5) | R;
+}
+
+// Find or add color in palette; returns index or -1 if palette is full
+static int palette_find_or_add(u16 color) {
+    for (int i = 0; i < paletteSize; i++)
+        if (palette[i] == color) return i;
+    if (paletteSize >= 256) return -1;
+    palette[paletteSize] = color;
+    return paletteSize++;
+}
+
+/**
+ * Export the current surface to a PNG file.
+ *
+ * @param path   Destination file path (e.g. "nitro:/img/sprite.png")
+ * @param surf   Pointer to the surface array
+ * @return 0 on success, non-zero on error
+ */
+int png_export(const char *path, const u16 *surf) {
+    int w = 1 << surfaceXres;
+    int h = 1 << surfaceYres;
+
+    // Use backup as RGBA pixel buffer
+    u8 *rgba = (u8 *)backup;
+
+    if (paletteBpp != 16) {
+        // ── Indexed mode: expand palette ──────────────────────────────────
+        for (int i = 0; i < h; i++) {
+            for (int j = 0; j < w; j++) {
+                u16 idx  = surf[i * w + j] & 0xFF;
+                u16 c    = (idx < 256) ? palette[idx] : 0;
+                u32 rgba8 = argb1555_to_rgba8888(c);
+                int p     = (i * w + j) * 4;
+                rgba[p+0] = (rgba8 >> 24) & 0xFF; // R
+                rgba[p+1] = (rgba8 >> 16) & 0xFF; // G
+                rgba[p+2] = (rgba8 >>  8) & 0xFF; // B
+                rgba[p+3] =  rgba8        & 0xFF;  // A
+            }
+        }
+    } else {
+        // ── Direct ARGB1555 mode ──────────────────────────────────────────
+        for (int i = 0; i < h; i++) {
+            for (int j = 0; j < w; j++) {
+                u16 c    = surf[i * w + j];
+                u32 rgba8 = argb1555_to_rgba8888(c);
+                int p     = (i * w + j) * 4;
+                rgba[p+0] = (rgba8 >> 24) & 0xFF;
+                rgba[p+1] = (rgba8 >> 16) & 0xFF;
+                rgba[p+2] = (rgba8 >>  8) & 0xFF;
+                rgba[p+3] =  rgba8        & 0xFF;
+            }
+        }
+    }
+
+    unsigned error = lodepng_encode32_file(path, rgba, (unsigned)w, (unsigned)h);
+    return (int)error;
+}
+
+// ── Import ───────────────────────────────────────────────────────────────────
+
+/**
+ * Import a PNG file into the surface.
+ * Aborts (returns error) if the image exceeds 128×128.
+ *
+ * @param path   Source file path
+ * @param surf   Pointer to the surface array to fill
+ * @return 0 on success, non-zero on error
+ */
+int png_import(const char *path, u16 *surf) {
+    unsigned imgW, imgH;
+
+    // backup: RGBA pixel data (128*128*4 = 65536 bytes max)
+    u8 *rgba = (u8 *)backup;
+
+    // lodepng allocates its own buffer; we copy then free immediately
+    u8 *tmp = NULL;
+    unsigned error = lodepng_decode32_file(&tmp, &imgW, &imgH, path);
+    if (error) return (int)error;
+
+    // ── Size check ───────────────────────────────────────────────────────
+    if (imgW > 128 || imgH > 128) {
+        free(tmp);
+        return -1;
+    }
+    memcpy(rgba, tmp, imgW * imgH * 4);
+    free(tmp);
+
+    // ── Auto-detect bpp via bitset in stack[] ─────────────────────────────
+    // stack[] is u16[16384] = 32768 bytes → treat as u8[32768].
+    // A bitset of 65536 bits needs exactly 8192 bytes → fits with room to spare.
+    u8 *bitset = (u8 *)stack;
+    memset(bitset, 0, 8192); // 65536 bits, one per possible ARGB1555 value
+
+    int uniqueColors = 0;
+    for (unsigned y = 0; y < imgH; y++) {
+        for (unsigned x = 0; x < imgW; x++) {
+            int p = (y * imgW + x) * 4;
+            u16 c = rgba8888_to_argb1555(rgba[p], rgba[p+1], rgba[p+2], rgba[p+3]);
+            // Test and set bit c in the bitset
+            if (!(bitset[c >> 3] & (1 << (c & 7)))) {
+                bitset[c >> 3] |= (1 << (c & 7));
+                uniqueColors++;
+            }
+        }
+    }
+
+    // ── Force paletteBpp based on detected color count ────────────────────
+    paletteBpp = (uniqueColors <= 256) ? 8 : 16;
+
+    // ── Compute surface exponents ─────────────────────────────────────────
+    surfaceXres = ceilLog2(imgW);
+    surfaceYres = ceilLog2(imgH);
+
+    int sw = 1 << surfaceXres;
+    int sh = 1 << surfaceYres;
+
+    memset(surf, 0, sw * sh * sizeof(u16));
+
+    if (paletteBpp == 8) {
+        // ── Indexed mode: rebuild palette and write indices ───────────────
+        paletteSize = 0;
+        for (unsigned y = 0; y < imgH; y++) {
+            for (unsigned x = 0; x < imgW; x++) {
+                int p   = (y * imgW + x) * 4;
+                u16 c   = rgba8888_to_argb1555(rgba[p], rgba[p+1], rgba[p+2], rgba[p+3]);
+                int idx = palette_find_or_add(c);
+                // idx can never be -1 here: we already verified uniqueColors <= 256
+                surf[y * sw + x] = (u16)idx;
+            }
+        }
+    } else {
+        // ── Direct ARGB1555 mode ──────────────────────────────────────────
+        for (unsigned y = 0; y < imgH; y++) {
+            for (unsigned x = 0; x < imgW; x++) {
+                int p = (y * imgW + x) * 4;
+                surf[y * sw + x] = rgba8888_to_argb1555(rgba[p], rgba[p+1], rgba[p+2], rgba[p+3]);
+            }
+        }
+    }
+
+    paletteSize = 256;
+    return 0;
 }

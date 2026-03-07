@@ -36,7 +36,6 @@
 
     añadir un preview para el cargador de archivos
 */
-
 #include <nds.h>
 #include <stdio.h>
 #include <time.h>
@@ -90,6 +89,7 @@
 #define brushSettingsOamId 24
 #define brushSettingsSelectorOamId 22
 #define selector16oamId 65
+
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 //static PrintConsole bottomConsole;
@@ -122,7 +122,7 @@ int backupIndex = -1;       // índice del último frame guardado
 int oldestBackup = 0;       // límite inferior (el frame más antiguo que aún es válido)
 int totalBackups = 0;       // cuántos backups se han llenado realmente
 
-//palletas
+//paletas
 int paletteSize = 256;
 int palettePos = 0;
 int paletteBpp = 8;
@@ -247,6 +247,7 @@ char fname[MAX_TEXT_LENGTH];
 DIR* currentDir = NULL;
 struct dirent entryList[MAX_FILES];  // usamos memoria estática
 int fileCount = 0;
+u8 sortedIdx[MAX_FILES];
 
 char path[257] = "/";  // ruta actual
 char format[6];
@@ -264,10 +265,9 @@ void buildCurrentFilePath(void) {
 
 int enterFolder(int index) {
     if(index < 0 || index >= fileCount) return 0;
-
-    if(entryList[index].d_type == DT_DIR) {
+    if(entryList[sortedIdx[index]].d_type == DT_DIR) {
         char newPath[256];
-        snprintf(newPath, sizeof(newPath), "%s%s/", path, entryList[index].d_name);
+        snprintf(newPath, sizeof(newPath), "%s%s/", path, entryList[sortedIdx[index]].d_name);
         strncpy(path, newPath, sizeof(path));
 
         // abrir nuevo directorio
@@ -297,6 +297,11 @@ int goBack() {
     selector = 0;
     return 1;
 }
+int compare_dirent(const void* a, const void* b) {
+    u8 idxA = *(const u8*)a;
+    u8 idxB = *(const u8*)b;
+    return strcasecmp(entryList[idxA].d_name, entryList[idxB].d_name);
+}
 void listFiles() {
     if(!currentDir) return;
 
@@ -304,31 +309,23 @@ void listFiles() {
     struct dirent* ent;
     rewinddir(currentDir);
 
-    // Leer entradas
     while((ent = readdir(currentDir)) != NULL && fileCount < MAX_FILES) {
-        entryList[fileCount++] = *ent;
+        entryList[fileCount] = *ent;
+        sortedIdx[fileCount] = (u8)fileCount; // índice directo
+        fileCount++;
     }
 
-    // --- (1) Ordenar alfabéticamente ---
-    for(int i = 0; i < fileCount - 1; i++) {
-        for(int j = i + 1; j < fileCount; j++) {
-            // Ordenar carpetas y archivos juntos alfabéticamente
-            if(strcasecmp(entryList[i].d_name, entryList[j].d_name) > 0) {
-                struct dirent temp = entryList[i];
-                entryList[i] = entryList[j];
-                entryList[j] = temp;
-            }
-        }
-    }
+    // qsort ahora mueve u8 (1 byte) en vez de dirent (270 bytes)
+    qsort(sortedIdx, fileCount, sizeof(u8), compare_dirent);
 
-    // --- (2) Mostrar en pantalla ---
+    // Renderizado — solo añadir sortedIdx[] al acceder
     int start = selector;
     if(start + SCREEN_LINES > fileCount) start = fileCount - SCREEN_LINES;
     if(start < 0) start = 0;
 
     for(int i = 0; i < SCREEN_LINES && (start + i) < fileCount; i++) {
-        const char* name = entryList[start + i].d_name;
-        bool isDir = (entryList[start + i].d_type == DT_DIR);
+        const char* name = entryList[sortedIdx[start + i]].d_name; // <-- sortedIdx
+        bool isDir = (entryList[sortedIdx[start + i]].d_type == DT_DIR); // <-- sortedIdx
         char displayName[32];
 
         if(isDir) {
@@ -1157,6 +1154,9 @@ void saveFile(int format,char* path,u16* palette,u16* surface){
         case formatACS:
             exportACS(path,surface);
         break;
+        case formatPNG:
+            png_export(path,surface);
+        break;
     }
 }
 void loadFile(int format,char* path,u16* palette,u16* surface){
@@ -1209,6 +1209,9 @@ void loadFile(int format,char* path,u16* palette,u16* surface){
         break;
         case formatACS:usesPages = false;
             importACS(path,surface);
+        break;
+        case formatPNG:usesPages = false;
+            png_import(path,surface);
         break;
     }
 }
@@ -2243,11 +2246,11 @@ int main(void) {
                                     drawSurfaceMain(true);
                                     drawSurfaceBottom();
                                     //dibujar arriba el nuevo color generado
-                                    AVdrawRectangle(pixels,192,64,32,8,_col);
+                                    AVdrawRectangle(pixels,192,MAX_ALPHA,32,8,_col);
                                 }else{
                                     updated = true;
                                     //color seleccionado/alpha
-                                    AVdrawRectangle(pixels,192,63,32,8,_col);
+                                    AVdrawRectangle(pixels,192,MAX_ALPHA,32,8,_col);
                                     AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
                                     if(palettePos == 0 && showGrid == true){
                                         drawGrid(AVinvertColor(_col));
@@ -2368,6 +2371,7 @@ int main(void) {
                     }
                     if(kDown & KEY_START || kDown & KEY_A)
                     {
+                        nesMode = false;
                         surfaceXres = resX;
                         surfaceYres = resY;
                         paletteBpp = selectorA;
@@ -2447,19 +2451,25 @@ int main(void) {
                     }
                     //input general
 
-                    #define MaxFormats 12
-
                     if(holdTimer > 10){
-                        if(kHeld & KEY_RIGHT && selectorA < (MaxFormats-1)){selectorA++;}
-                        if(kHeld & KEY_LEFT && selectorA > 0){selectorA--;}
+                        if(kHeld & KEY_RIGHT){selectorA++;}
+                        if(kHeld & KEY_LEFT){selectorA--;}
+
                         if(kHeld & KEY_UP && selector > 0){selector--;}
-                        if(kHeld & KEY_DOWN){selector++;}
+                        if(kHeld & KEY_DOWN && selector < fileCount-1){selector++;}
                     }
                     else{
-                        if(kDown & KEY_RIGHT && selectorA < (MaxFormats-1)){selectorA++;}
-                        if(kDown & KEY_LEFT && selectorA > 0){selectorA--;}
+                        if(kDown & KEY_RIGHT){selectorA++;}
+                        if(kDown & KEY_LEFT){selectorA--;}
+
                         if(kDown & KEY_UP && selector > 0){selector--;}
-                        if(kDown & KEY_DOWN){selector++;}
+                        if(kDown & KEY_DOWN && selector < fileCount-1){selector++;}
+                    }
+
+                    if(selectorA >= MaxFormats){
+                        selectorA = 0;
+                    }else if(selectorA < 0){
+                        selectorA = MaxFormats-1;
                     }
 
                     const char texts[MaxFormats][24] = {
@@ -2474,7 +2484,8 @@ int main(void) {
                         ".pal [YY-CHR]",
                         ".bin [SNES 8bpp]",
                         ".pal [ARGB 1555]",
-                        ".acs [Custom format]"
+                        ".acs [Custom format]",
+                        ".png"
                     };
                     const char formats[MaxFormats][6] = {
                         ".bmp",
@@ -2488,7 +2499,8 @@ int main(void) {
                         ".pal",
                         ".gif",
                         ".pal",
-                        ".acs"
+                        ".acs",
+                        ".png"
                     };
                     strcpy(format,formats[selectorA]);
                     //obtener información del teclado
@@ -2502,12 +2514,10 @@ int main(void) {
                         if(selector < 0 || selector >= fileCount) {
                             printf("Error");
                         } else {
-                            if(entryList[selector].d_type == DT_DIR) {
-                                enterFolder(selector);
-                            } else {
-                                // Si es archivo, guarda el nombre sin modificar el path
-                                strncpy(fname, entryList[selector].d_name, sizeof(fname));
-                                // No concatenes al path, solo usa path como carpeta actual
+                            if(entryList[sortedIdx[selector]].d_type == DT_DIR) {
+                            enterFolder(selector);
+                        } else {
+                            strncpy(fname, entryList[sortedIdx[selector]].d_name, sizeof(fname));
                                 format[0] = '\0';
                                 kDown = KEY_START; // simula "abrir"
                                 goto textConsole;
@@ -2531,7 +2541,7 @@ int main(void) {
         oamUpdate(&oamSub);
     }
     /*
-    esta sección la dedico a quien sea que haya leido todo mi código, sea una persona con tiempo libre o una IA
+    esta sección la dedico a quien sea que haya leido todo mi código, sea una persona con tiempo libre o lo que sea.
         y sí, vengo a justificar algunas de mis horribles practicas.
         en estos meses de desarrollo he aprendido muchas cosas, este fué mi primer proyecto para la DS y me gustaría hablar de
         desiciones que tomé al hacer el código y posibles preguntas
@@ -2541,7 +2551,7 @@ int main(void) {
 
     2. ¿por qué uso GOTO?
         sé que es considerado una malísima practica, y en varios casos es verdad.
-        Sin embargo, si te fijas bien, en este códgio solo hay 2 labels
+        Sin embargo, si te fijas bien, en este códgio solo hay 2 labels (no sé cómo se llaman lol)
         textConsole y frameEnd, estos saltos de hecho son muy útiles, irónicamente para ordenar más el proyecto y
         porque pueden mejorar el rendimiento considerablemente, ya que generalmente los uso para saltarme código que no necesito ejecutar
 

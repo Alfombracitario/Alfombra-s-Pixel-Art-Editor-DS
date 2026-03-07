@@ -40,7 +40,13 @@ int loadBMP_4bpp(const char* filename, uint16_t* palette, uint16_t* surface);
 void exportACS(const char* path, u16* surface);
 void importACS(const char* path, u16* surface);
 
+//png
+int png_import(const char *path, u16 *surf);
+int png_export(const char *path, const u16 *surf);
+
 //macros
+#define MaxFormats 13
+
 #define formatDirectBMP 0
 #define format8bppBMP 1
 #define format4bppBMP 2
@@ -53,5 +59,7 @@ void importACS(const char* path, u16* surface);
 #define formatSNES8 9
 #define formatPal1555 10
 #define formatACS 11
+#define formatPNG 12
+#define formatGIF 13
 
 #endif // FORMATS_H
