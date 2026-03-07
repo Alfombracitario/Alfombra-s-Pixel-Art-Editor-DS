@@ -1,11 +1,11 @@
 # A-Pix DS
 <img width="1485" height="384" alt="image" src="https://github.com/user-attachments/assets/0de200cb-ea3a-4f0a-9268-c7748b70b55e" />
 
-
 This is a pixel art editor developed specifically for the **Nintendo DS**.
 
-
 The application is designed and tested to run on **original Nintendo DS hardware**. Emulator compatibility is **not guaranteed**, and emulator-specific issues are not a priority for this project.
+
+*Tested on DSi, I need some DS testers.*
 
 This document describes the editor controls and the custom image format used by the application.
 
@@ -26,17 +26,23 @@ This document describes the editor controls and the custom image format used by 
 
 ---
 
-## 2. ACS File Format
+### Supported formats ###
+- ACS (custom format for retro consoles)
+- PNG
+- BMP (4bpp, 8bpp and 24bpp)
+- PCX
+- NES
+- GBC
+- GBA 4BPP
+- SNES 4BPP
+- SNES 8BPP
+- YY-CHR .pal
+- ARGB 1555 palettes
+---
 
-**`.acs` (Alfombra Compression System)** is a custom image format created to efficiently compress pixel art and allow **very fast loading times** on Nintendo DS hardware (and any other retro hardware!)
-
-This format is currently **experimental**. While it is optimized for performance and memory usage, it may still contain edge cases or bugs. Use with caution, especially for important or production assets.
+<img width="513" height="768" alt="Sprite-0001" src="https://github.com/user-attachments/assets/03e9187d-e29f-4640-8da8-6d1d65a0ce52" />
 
 ---
 
-<img width="256" height="384" alt="A-PixDS screenshot" src="https://github.com/user-attachments/assets/67042a94-b95d-416d-bcdb-9fb9232637dc" />
+# Disocrd: https://discord.gg/stF2G3f4fc #
 
----
-
-Disocrd:
-https://discord.gg/stF2G3f4fc
