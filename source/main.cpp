@@ -4,17 +4,12 @@
 */
 
 /*
-    URGENTE (para v0.4):
-    compatibilidad con flashcards r4
-
     To-Do list (para v1.0):
     reordenamiento de código
     añadir figuras (dos pasos)
         rectangulo
         circulo
         línea
-    añadir figuras (tres pasos)
-        parabola
 
     select tool
     move
@@ -29,8 +24,6 @@
         index swap (colores)
         cambiar hue global
         reducir colores (posterización)
-        aumentar páginas (solo para formatos retro)
-        eliminar páginas
 
     añadir soporte a imagenes más grandes (cargando pedazos)
 
@@ -39,17 +32,17 @@
 #include <nds.h>
 #include <stdio.h>
 #include <time.h>
-#include <fat.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <string>
 
 #include <font.h>
 
+#include "files.h"
 #include "avdslib.h"
-#include "formats.h"
 #include "intro.h"//intro global para todos mis juegos
+
+
 #include "GFXinput.h"
 #include "GFXconsoleInput.h"
 #include "GFXselector24.h"
@@ -90,6 +83,8 @@
 #define brushSettingsSelectorOamId 22
 #define selector16oamId 65
 
+#define surfaceSize 128*128
+
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 //static PrintConsole bottomConsole;
@@ -100,15 +95,18 @@ u16 surface[16384]__attribute__((section(".iwram"))); // 32 KB en IWRAM
 //RAM 360,960 bytes usados (en arrays)
 u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
+u16* bgPreviewGfx = NULL;
 u16 *gfx32;
 u16 *gfx16;
 u16 *gfxBG;
-u16 pixelsTop[49152];//copia en RAM (es más rápida)
+u16 pixelsTop[surfaceSize];//copia en RAM (es más rápida)
 u16 pixels[49152];
 u16 palette[256];
 
-u16 stack[16384];// para operaciones temporales
+u16 stack[surfaceSize];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
+
+u16 gradientTable[SCREEN_H];
 
 u8 paletteAlpha = MAX_ALPHA;//indicador del alpha actual, útil para 16bpp
 //ideal añadir un array para guardar más frames
@@ -116,7 +114,7 @@ u8 paletteAlpha = MAX_ALPHA;//indicador del alpha actual, útil para 16bpp
 touchPosition touch;
 
 int backupMax = 8;
-int backupSize = 16384;//entry size
+int backupSize = surfaceSize<<1;
 
 int backupIndex = -1;       // índice del último frame guardado
 int oldestBackup = 0;       // límite inferior (el frame más antiguo que aún es válido)
@@ -149,8 +147,6 @@ int prevtpy = 0;
 int prevx = 0;
 int prevy = 0;
 
-int mainSurfaceXoffset = 0;
-int mainSurfaceYoffset = 0;
 int subSurfaceXoffset = 0;
 int subSurfaceYoffset = 0;
 int subSurfaceZoom = 3;// 8 veces más cerca
@@ -191,7 +187,8 @@ int gridSkips = 0;
 bool rPressed = false;
 bool screensSwapped = false;
 bool showBrushSettings = false;
-
+bool preview = true;
+bool redraw = true;
 enum {
     ACTION_NONE      = 0,
     ACTION_UP        = 1 << 0,
@@ -235,207 +232,87 @@ typedef enum {
 BrushMode brushMode = BRUSH_MODE_NORMAL;
 BrushSize brushSize = BRUSH_SIZE_1;
 
-
-//archivos
-#define MAX_TEXT_LENGTH 32
-#define MAX_FILES 256
-#define MAX_NAME_LEN 32   // temporal para el nombre completo del archivo
-#define SCREEN_LINES 20   // cuántos archivos caben en pantalla
-
-char fname[MAX_TEXT_LENGTH];
-
-DIR* currentDir = NULL;
-struct dirent entryList[MAX_FILES];  // usamos memoria estática
-int fileCount = 0;
-u8 sortedIdx[MAX_FILES];
-
-char path[257] = "/";  // ruta actual
-char format[6];
-char currentFilePath[257];
-
-int selector = 0;//selector para la consola
-int selectorA = 0;//selector secundario
-
-void buildCurrentFilePath(void) {
-    currentFilePath[0] = '\0';
-    strcat(currentFilePath, path);
-    strcat(currentFilePath, fname);
-    strcat(currentFilePath, format);
-}
-
-int enterFolder(int index) {
-    if(index < 0 || index >= fileCount) return 0;
-    if(entryList[sortedIdx[index]].d_type == DT_DIR) {
-        char newPath[256];
-        snprintf(newPath, sizeof(newPath), "%s%s/", path, entryList[sortedIdx[index]].d_name);
-        strncpy(path, newPath, sizeof(path));
-
-        // abrir nuevo directorio
-        if(currentDir) closedir(currentDir);
-        currentDir = opendir(path);
-        selector = 0;
-        return 1; // carpeta abierta
-    }
-    return 0; // no es carpeta
-}
-int goBack() {
-    if(strcmp(path, "/") == 0) return 0; // ya en raíz
-
-    // quitar última carpeta
-    char* lastSlash = strrchr(path, '/');
-    if(lastSlash != path) {
-        *lastSlash = '\0';
-        lastSlash = strrchr(path, '/');
-        *(lastSlash+1) = '\0';
-    } else {
-        path[1] = '\0';
-    }
-
-    // abrir carpeta padre
-    if(currentDir) closedir(currentDir);
-    currentDir = opendir(path);
-    selector = 0;
-    return 1;
-}
-int compare_dirent(const void* a, const void* b) {
-    u8 idxA = *(const u8*)a;
-    u8 idxB = *(const u8*)b;
-    return strcasecmp(entryList[idxA].d_name, entryList[idxB].d_name);
-}
-void listFiles() {
-    if(!currentDir) return;
-
-    fileCount = 0;
-    struct dirent* ent;
-    rewinddir(currentDir);
-
-    while((ent = readdir(currentDir)) != NULL && fileCount < MAX_FILES) {
-        entryList[fileCount] = *ent;
-        sortedIdx[fileCount] = (u8)fileCount; // índice directo
-        fileCount++;
-    }
-
-    // qsort ahora mueve u8 (1 byte) en vez de dirent (270 bytes)
-    qsort(sortedIdx, fileCount, sizeof(u8), compare_dirent);
-
-    // Renderizado — solo añadir sortedIdx[] al acceder
-    int start = selector;
-    if(start + SCREEN_LINES > fileCount) start = fileCount - SCREEN_LINES;
-    if(start < 0) start = 0;
-
-    for(int i = 0; i < SCREEN_LINES && (start + i) < fileCount; i++) {
-        const char* name = entryList[sortedIdx[start + i]].d_name; // <-- sortedIdx
-        bool isDir = (entryList[sortedIdx[start + i]].d_type == DT_DIR); // <-- sortedIdx
-        char displayName[32];
-
-        if(isDir) {
-            // Carpeta: recortar si es demasiado largo
-            int len = strlen(name);
-            if(len > 27) { // deja 4 para "..."
-                snprintf(displayName, sizeof(displayName), "%.27s.../", name);
-            } else {
-                snprintf(displayName, sizeof(displayName), "%s/", name);
-            }
-        } else {
-            // Archivo: mantener extensión visible
-            const char* dot = strrchr(name, '.');
-            if(dot && strlen(name) > 27) {
-                // nombre demasiado largo: mostrar parte inicial + extensión
-                int extLen = strlen(dot);
-                int keep = 27 - extLen - 3; // 3 para "..."
-                if(keep < 1) keep = 1;
-                snprintf(displayName, sizeof(displayName), "%.*s...%s", keep, name, dot);
-            } else if(strlen(name) > 27) {
-                snprintf(displayName, sizeof(displayName), "%.23s...", name);
-            } else {
-                strcpy(displayName, name);
-            }
-        }
-
-        // Mostrar con selector
-        if(start + i == selector)
-            printf("> %s\n", displayName);
-        else
-            printf("  %s\n", displayName);
-    }
-}
-
-
-void OnKeyPressed(int key) {
-if ( key < 0 ) return;
-    switch(key) {
-    case '\b':
-        if (selector > 0 ) {
-            selector--;
-            fname[selector] = '\0';
-        }
-    break;
-    case '\n':
-    case '\r':
-        if (selector < MAX_TEXT_LENGTH)
-        {
-            fname[selector++] = '\n';
-            fname[selector] = '\0';           
-        }
-    default:
-        if (selector < MAX_TEXT_LENGTH)
-        {
-            fname[selector++] = (char)key;
-            fname[selector] = '\0';
-        }
-    }
-}
 //función para pasar copiar datos rápidamente
 extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes);
 
 void submitVRAM(bool full = false, bool _accurate = false, bool both = true)
 {
     // ====== Cálculo de offsets y tamaños ======
-    const int offset = (mainSurfaceYoffset << 8) + mainSurfaceXoffset; // offset de la pantalla superior
-    const int sizeTop = 512 << surfaceYres;   // Tamaño top
     int sizeBottom = full ? 98304 : 65536;
 
-    u16* srcTop = pixelsTop + offset;
-    u16* dstTop = pixelsTopVRAM + offset;
+    u16* srcTop = pixelsTop;
+    u16* dstTop = pixelsTopVRAM;
     u16* srcBottom = pixels;
     u16* dstBottom = pixelsVRAM;
 
     // ====== Flush de caché antes de transferir ======
     if (_accurate) {
-        if (both) DC_FlushRange(srcTop, sizeTop);
+        if (both) DC_FlushRange(srcTop, surfaceSize<<1);
         DC_FlushRange(srcBottom, sizeBottom);
     }
 
     // ====== Asegurar que DMA0 y DMA1 estén detenidos ======
-    DMA0_CR = 0;
-    DMA1_CR = 0;
+    DMA2_CR = 0;
+    DMA3_CR = 0;
 
     // ====== Iniciar DMA ======
     if (both) {
         // Top screen
-        DMA0_SRC  = (u32)srcTop;
-        DMA0_DEST = (u32)dstTop;
-        DMA0_CR   = (sizeTop >> 1) | DMA_ENABLE; // Halfwords
+        DMA2_SRC  = (u32)srcTop;
+        DMA2_DEST = (u32)dstTop;
+        DMA2_CR   = (surfaceSize<<1) | DMA_ENABLE; // Halfwords
     }
 
     // Bottom screen
-    DMA1_SRC  = (u32)srcBottom;
-    DMA1_DEST = (u32)dstBottom;
-    DMA1_CR   = (sizeBottom >> 1) | DMA_ENABLE; // Halfwords
+    DMA3_SRC  = (u32)srcBottom;
+    DMA3_DEST = (u32)dstBottom;
+    DMA3_CR   = (sizeBottom >> 1) | DMA_ENABLE; // Halfwords
 
     // ====== Esperar a que terminen ======
     if (both) {
-        while ((DMA0_CR & DMA_ENABLE) || (DMA1_CR & DMA_ENABLE));
+        while ((DMA2_CR & DMA_ENABLE) || (DMA3_CR & DMA_ENABLE));
     } else {
-        while (DMA1_CR & DMA_ENABLE);
+        while (DMA3_CR & DMA_ENABLE);
     }
 
     // ====== Flush final si VRAM se usará en GPU inmediatamente ======
     if (_accurate) {
-        if (both) DC_FlushRange(dstTop, sizeTop);
+        if (both) DC_FlushRange(dstTop, surfaceSize<<1);
         DC_FlushRange(dstBottom, sizeBottom);
     }
 }
+
+static void vblank_handler(void)
+{
+    // Stop the previous DMA copy
+    dmaStopSafe(0);
+
+    BG_PALETTE[0] = gradientTable[0];
+
+    dmaSetParams(0,
+                 &gradientTable[1],
+                 &BG_PALETTE[0], // Write to the background color
+                 DMA_SRC_INC | // Autoincrement source after each copy
+                 DMA_DST_FIX | // Keep destination fixed
+                 DMA_START_HBL | // Start copy at the start of horizontal blank
+                 DMA_REPEAT | // Don't stop DMA after the first copy.
+                 DMA_COPY_HALFWORDS | 1 | // Copy one halfword each time
+                 DMA_ENABLE);
+}
+
+void initGradient(){
+    for (int i = 0; i < 32; i++) {
+        int r = 15 - i;
+        if (r < 0) r = 0;
+
+        int b = (31 - i) >> 1;
+        u16 color = (b << 10) | r;
+        gradientTable[i] = color;
+        gradientTable[SCREEN_H-i] = color;
+    }
+    irqSet(IRQ_VBLANK, vblank_handler);//configurar HDMA
+}
+
 
 static inline bool brushPatternPass(int x, int y, BrushMode mode)
 {
@@ -676,49 +553,32 @@ inline void drawGrid(u16 color){
 }
 
 //=========================================================DRAW SURFACE========================================================================
-
-//por algún motivo inline bajaba el rendimiento
-void drawSurfaceMain(bool full = true)
+inline void drawSurfaceMain(bool full = true)
 {
-    both = true;//debe actualizar ambas pantallas
-    int xres = 1<<surfaceXres;   // ancho
-    int yres = 1<<surfaceYres;   // alto
+    both = true;
+    int xres = 1 << surfaceXres;
+    int yres = 1 << surfaceYres;
 
-    if(paletteBpp == 16){//color directo
-        for(int i = 0; i < yres; i++) // eje Y
-        {
-            int _y = i <<surfaceXres; // fila en surface
-            int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
+    if (xres == 7 && paletteBpp == 16) {
+        dmaCopy(surface, pixelsTop, 128 << surfaceYres);
+        return;
+    }
 
-            for(int j = 0; j < xres; j++) // eje X
-            {
-                pixelsTop[y+j] = surface[_y+j];
-            }
+    u16* dst = pixelsTop;
+    
+    if (paletteBpp == 16) {
+        const u16* src = surface;
+        for (int i = 0; i < yres; i++, dst += 128, src += xres) {
+            memcpy(dst, src, xres<<1);
         }
     }
-    else if(paletteOffset == 0)
-    {
-        for(int i = 0; i < yres; i++) // eje Y
-        {
-            int _y = i <<surfaceXres; // fila en surface
-            int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
-
-            for(int j = 0; j < xres; j++) // eje X
-            {
-                pixelsTop[y+j] = palette[surface[_y+j]];
-            }
-        }
-    }
-    else
-    {
-        for(int i = 0; i < yres; i++) // eje Y
-        {
-            int _y = i <<surfaceXres; // fila en surface
-            int y  = ((i+mainSurfaceYoffset)<<8) + mainSurfaceXoffset; // fila en pantalla
-
-            for(int j = 0; j < xres; j++) // eje X
-            {
-                pixelsTop[y+j] = palette[paletteOffset + surface[_y+j]];
+    else {
+        const u16* pal = palette + paletteOffset;
+        const u16*  src = surface;
+        for (int i = 0; i < yres; i++, dst += 128, src += xres) {
+            const u16* row = src;
+            for (int j = 0; j < xres; j++) {
+                dst[j] = pal[row[j]];
             }
         }
     }
@@ -733,23 +593,25 @@ __attribute__((optimize("jump-tables")))
 void drawSurfaceBottom(){
     updated = true;
 
-    u16 *srcBase = pixelsTop + ((mainSurfaceYoffset + subSurfaceYoffset) << 8) + (mainSurfaceXoffset + subSurfaceXoffset);
+    u16 *srcBase = pixelsTop + ((subSurfaceYoffset) << 7) + (subSurfaceXoffset);
     u16 *dstBase = pixels + 64; // centrado
 
     switch (subSurfaceZoom) {
         case 0://si no hay zoom
             for (int i = 0; i < 128; i++) {//sí, siempre copiar las 128, es para arreglar errores visuales
-                u16* src = pixelsTop + ((i + mainSurfaceYoffset) << 8) + mainSurfaceXoffset;
+                u16* src = pixelsTop + (i<< 7);
                 u16* dst = pixels + ((i << 8) + 64);
                 memcpy_fast_arm9(src, dst, 256);
             }
             break;
-
-        case 1: drawSurfaceBottom2x(srcBase, dstBase, 512, 512); break;
-        case 2: drawSurfaceBottom4x(srcBase, dstBase, 512, 512); break;
-        case 3: drawSurfaceBottom8x(srcBase, dstBase, 512, 512); break;
-        case 4: drawSurfaceBottom16x(srcBase, dstBase, 512, 512); break;
-        case 5: drawSurfaceBottom32x(srcBase, dstBase, 512, 512); break;
+        
+        //256: tamaño horizontal (en bytes) del layer 3 de la capa de arriba
+        //512: lo mismo pero abajo
+        case 1: drawSurfaceBottom2x(srcBase, dstBase, 256, 512); break;
+        case 2: drawSurfaceBottom4x(srcBase, dstBase, 256, 512); break;
+        case 3: drawSurfaceBottom8x(srcBase, dstBase, 256, 512); break;
+        case 4: drawSurfaceBottom16x(srcBase, dstBase,256, 512); break;
+        case 5: drawSurfaceBottom32x(srcBase, dstBase,256, 512); break;
 
         default:
             // fórmula general
@@ -762,8 +624,8 @@ void drawSurfaceBottom(){
                 int dstY = 0;
 
                 for (int i = 0; i < blockSize; i++) {
-                    int srcY = i + mainSurfaceYoffset + yoffset;
-                    u16* srcRow = pixelsTop + (srcY << 8) + mainSurfaceXoffset + xoffset;
+                    int srcY = i + yoffset;
+                    u16* srcRow = pixelsTop + (srcY << 8) + xoffset;
 
                     for (int k = 0; k < yrepeat; k++) {
                         u16* dstRow = pixels + (dstY << 8) + 64;
@@ -873,53 +735,35 @@ void updatePal(int increment, int *palettePos)
     AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
 }
 //=================================================================Inicialización===================================================================================|
-void clearTopBitmap()
-{
-    u8 r = 16;
-    u8 b = 16;
-    u16 _col = 0;
-    for(int j = 0; j < 192; j++)//toda la pantalla superior (sí, así de optimizado lol)
-    {
-        if(j < 176)
-        {
-            if(r > 0) {r-=2;}
-            if(b > 0) {b--;}   
-        }
-        else
-        {
-            if(r < 16 && j >= 184) {r+=2;}
-            if(b < 16) {b++;}   
-        }
-        _col = AVARGB(r,0,b);
-        AVfillDMA(pixelsTopVRAM,j<<8,(((j+1)<<8)-1),_col);//dibuja directamente en la VRAM
-    }
+inline void clearTop(){
+    memset(pixelsTop,0,surfaceSize<<1);
 }
-void centerCanvas(){
-    mainSurfaceXoffset = 128-((1<<surfaceXres)>>1);
-    mainSurfaceYoffset = 96-((1<<surfaceYres)>>1);
-}
-void initBitmap()
-{
-    for(int i = 0; i < 16383; i++)
-    {
-        surface[i] = 0;
-        stack[i] = 0;
-    }
+inline void clearPal(){
     for(int i = 0; i < paletteSize; i++) {
         palette[i] = C_BLACK;
     }
+}
+inline void clearAll(){
+    clearTop();
+    clearPal();
+    for(int i = 0; i < surfaceSize; i++)
+    {
+        surface[i] = 0;
+        stack[i] = 0;
+        pixelsTopVRAM[i] = 0;
+    }
+}
+void initBitmap()
+{
+    clearAll();
     for(int i = 0; i < 49152; i++)
     {
         pixels[i] = 0;
-        pixelsTop[i] = 0;
-        pixelsTopVRAM[i] = 0;
         pixelsVRAM[i] = 0;
     }
-
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
-    vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
-    bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+    bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
 
     videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
@@ -932,12 +776,13 @@ void initBitmap()
     // Transferir pixels a la RAM
     dmaCopyHalfWords(3,pixelsVRAM,pixels , 49152 * sizeof(u16));
 
-    centerCanvas();
-    clearTopBitmap();
-
     drawSurfaceMain(true);
     drawSurfaceBottom();
     accurate = true;
+
+    bgSetScale(3,256,256);
+    bgSetScroll(3, -64, -32);
+    bgUpdate();
 }
 u16 *gfxBrushSettings;
 u16 *gfx8;
@@ -968,6 +813,7 @@ void setBrushSettingsSprites(bool on){
         gfx8,
         -1,
     false, false, false, false, false);
+    oamUpdate(&oamSub);
 }
 
 void setEditorSprites(){
@@ -1045,7 +891,7 @@ ConsoleFont font = {
     .asciiOffset = 32,
     .numChars = fontTilesLen>>5,
 };
-inline void textMode()
+void textMode()
 {
     if(currentSubMode == SUB_TEXT) return; // ya estamos en texto
     currentSubMode = SUB_TEXT;
@@ -1055,24 +901,36 @@ inline void textMode()
     vramSetBankA(VRAM_A_MAIN_BG);
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
     consoleSetFont(&topConsole, &font);
-
-
-    printf("Press any key\nor touch the screen \nto update the text console.");
     oamClear(&oamSub, 0, 128);
+    oamUpdate(&oamSub);
     sleepingFrames = 1;
     sleepTimer = 60;
 }
 int bgPreview;
-
 void textKeyboardDraw(){
-    //planeo tener una capa extra para poder hacer preview
+    //añadir capa de preview
+    bgPreview = bgInitSub(3, BgType_Bmp16, BgSize_B16_128x128,4,0);
+    bgPreviewGfx = bgGetGfxPtr(bgPreview);
+    dmaFillHalfWords(0, bgPreviewGfx, 128 * 128 * 2);
+
     int bg2 = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
 
-    //hay espacio para una capa 16bpp de 128x128!!11!
+    decompress(GFXconsoleInputBitmap, bgGetGfxPtr(bg2), LZ77Vram);
     dmaCopy(GFXconsoleInputPal, BG_PALETTE_SUB, GFXconsoleInputPalLen);
-    dmaCopy(GFXconsoleInputBitmap, bgGetGfxPtr(bg2), GFXconsoleInputBitmapLen);
+
+    bgSetScale(bgPreview, 296, 296);
+    bgSetScroll(bgPreview, 0, 0);
+    bgSetPriority(bgPreview, 0); // 0 = mayor prioridad
+    bgSetPriority(bg2, 1);
+    bgUpdate();
+
+    printf(fname);
+    printf(texts[selectorA]);
+    printf("\n????????????????????????????????\n");
+    listFiles();
+    redraw = false;
 }
-inline void bitmapMode()
+void bitmapMode()
 {
     if(currentSubMode == SUB_BITMAP) return; // ya estamos en bitmap
     currentSubMode = SUB_BITMAP;
@@ -1080,21 +938,26 @@ inline void bitmapMode()
     //reiniciamos VRAM
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
-    vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
-    bgInit(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+    //vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
+    int bgMain = bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
 
     videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
     vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
     bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
 
-    clearTopBitmap();//redibujar el fondo
     setEditorSprites();
     paletteAlpha = MAX_ALPHA;
     submitVRAM(true,true,true);//recuperamos nuestros queridos datos
     if(paletteBpp == 16){
         setOamBG();
     }
+    bgSetScale(7,256,256);
+    bgSetScroll(7, 0, 0);
+    bgSetScale(bgMain,256,256);
+    bgSetScroll(bgMain, -64, -32);
+    bgUpdate();
+    oamUpdate(&oamSub);
 }
 //============================================================= SD CARD ===============================================|
 bool saveArray(const char *path, void *array, size_t size) {
@@ -1112,110 +975,6 @@ bool loadArray(const char *path, void *array, size_t size) {
     fclose(file);
     return true;
 }
-
-void saveFile(int format,char* path,u16* palette,u16* surface){
-    switch(format){
-        default:
-            return;
-        break;
-        case formatDirectBMP:
-            saveBMP(path,palette,surface);//Gracias Zhennyak!
-        break;
-        case format8bppBMP:
-            saveBMP_indexed(path,palette,surface);
-        break;
-        case format4bppBMP:
-            saveBMP_4bpp(path,palette,surface);
-        break;
-        case formatNES:
-            exportNES(path,surface,1<<surfaceYres);
-        break;
-        case formatGBC:
-            exportGBC(path,surface,1<<surfaceYres);
-        break;
-        case formatSNES4:
-            exportSNES(path,surface,1<<surfaceYres);
-        break;
-        case formatGBA4:
-            exportGBA(path,surface,1<<surfaceYres);
-        break;
-        case formatPCX:                                                                           
-            exportPCX(path,surface,1<<surfaceXres,1<<surfaceYres);
-        break;
-        case formatPAL:
-            exportPal(path);
-        break;
-        case formatSNES8:
-            exportSNES8bpp(path,surface,1<<surfaceYres);
-        break;
-        case formatPal1555:
-            exportPal1555(path);
-        break;
-        case formatACS:
-            exportACS(path,surface);
-        break;
-        case formatPNG:
-            png_export(path,surface);
-        break;
-    }
-}
-void loadFile(int format,char* path,u16* palette,u16* surface){
-    switch(format)
-    {
-        default:
-            printf("\nNot supported!");
-        break;
-        case formatDirectBMP:
-            loadBMP_direct(path,surface);
-            paletteBpp = 16;usesPages = false;
-        break;
-        case format8bppBMP:
-            loadBMP_indexed(path,palette,surface);
-            paletteBpp = 8;usesPages = false;
-        break;
-        case format4bppBMP:
-            loadBMP_4bpp(path,palette,surface);
-            paletteBpp = 4;usesPages = false;
-        break;
-         case formatNES:
-            paletteBpp = 2;nesMode = true;usesPages = true;
-            importNES(path,surface);
-            drawNesPalette();
-        break;
-        case formatGBC:
-            paletteBpp = 2;usesPages = true;
-            importGBC(path,surface);
-        break;
-        case formatSNES4:
-            paletteBpp = 4;usesPages = true;
-            importSNES(path,surface);
-        break;
-        case formatGBA4:
-            paletteBpp = 4;usesPages = true;
-            importGBA(path,surface);
-        break;
-        case formatPCX:    
-            paletteBpp = 8;usesPages = false;
-            importPCX(path,surface);
-        break;
-        case formatPAL:
-            importPal(path);
-        break;
-        case formatSNES8:usesPages = true;
-            importSNES8bpp(path,surface);
-        break;
-        case formatPal1555:
-            importPal1555(path);
-        break;
-        case formatACS:usesPages = false;
-            importACS(path,surface);
-        break;
-        case formatPNG:usesPages = false;
-            png_import(path,surface);
-        break;
-    }
-}
-
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys) {
     int actions = ACTION_NONE;
@@ -1442,6 +1201,7 @@ void applyTool(int x, int y, bool dragging) {
             }
                 currentTool = TOOL_BRUSH;//volver a seleccionar el pincel
                 oamSetXY(&oamSub,selector24oamID,0,16);
+                oamUpdate(&oamSub);
             break;
 
 
@@ -1908,7 +1668,8 @@ int main(void) {
     initBitmap();
     setEditorSprites();
     setBackupVariables();
-    initFPS();
+    //initFPS();
+    initGradient();
     //aclarar la pantalla
     for(int i = 0; i < 16; i++)
     {
@@ -2030,6 +1791,7 @@ int main(void) {
                             }
                             //además dibujamos un contorno en dónde seleccionamos
                             oamSetXY(&oamSub,selector24oamID,col*24, (row*12)+16);
+                            oamUpdate(&oamSub);
                             stylusPressed = true;
                             goto frameEnd;
                         }
@@ -2281,7 +2043,7 @@ int main(void) {
                     stylusPressed = false;
                 }
 
-                frameEnd://finalizar el frame del modo bitmap
+                frameEnd:
 
                 if(kUp & KEY_TOUCH && drew == true){
                     drew = false;
@@ -2317,10 +2079,9 @@ int main(void) {
         else//=======================================CONSOLA DE TEXTO=======================================>
         {
             textConsole:
-                bool redraw = false;
+                //comportamiento global.
                 if(kUp){holdTimer = 0;}
                 if(kDown){
-                    redraw = true;
                     holdTimer++;//sí, esta weá está muy simplificada
                 }
                 //este comentario está dedicado a cualqueira que analice este código, sí, sé lo que hago esto es intencional y tengo razones para hacerlo.
@@ -2331,8 +2092,6 @@ int main(void) {
                     if(kUp){holdTimer = 0;goto textConsole;}
                     swiWaitForVBlank();
                     holdTimer++;
-                    redraw = true;
-                    consoleClear();
                 }//espero que hayas disfrutado ver estos crimenes a la programación! sigueme para más contenido como este.
 
                 if(kDown & KEY_SELECT)
@@ -2377,7 +2136,7 @@ int main(void) {
                         paletteBpp = selectorA;
                         subSurfaceZoom = 7-MAX(surfaceXres,surfaceYres);//limitar el zoom
                         //se inicia un nuevo lienzo
-                        initBitmap();
+                        clearAll();
                         bitmapMode();//simplemente salir de este menú
                         drawColorPalette();
                         if(selector == 3){
@@ -2385,6 +2144,7 @@ int main(void) {
                             drawNesPalette();
                         }
                         selector = 0;
+                        goto frameEnd;
                     }
                     //touch input
                     if(kDown & KEY_TOUCH){
@@ -2426,13 +2186,14 @@ int main(void) {
                                 saveFile(imgFormat,currentFilePath,palette,surface);
                             }
                             bitmapMode();
+                            goto frameEnd;
                         }
                     }
                     else{
                         if(kDown & KEY_START)//se carga el archivo
                         {
                             buildCurrentFilePath();
-
+                            clearTop();
                             nesMode = false;
                             if(selectorA == formatPAL){
                                 loadFile(formatPAL,currentFilePath,palette,surface);
@@ -2447,23 +2208,25 @@ int main(void) {
                             drawColorPalette();
                             setBackupVariables();
                             bitmapMode();
+                            goto frameEnd;
                         }
                     }
                     //input general
 
                     if(holdTimer > 10){
-                        if(kHeld & KEY_RIGHT){selectorA++;}
-                        if(kHeld & KEY_LEFT){selectorA--;}
+                        
+                        if(kHeld & KEY_RIGHT){selectorA++;redraw = true;consoleClear();}
+                        if(kHeld & KEY_LEFT){selectorA--;redraw = true;consoleClear();}
 
-                        if(kHeld & KEY_UP && selector > 0){selector--;}
-                        if(kHeld & KEY_DOWN && selector < fileCount-1){selector++;}
+                        if(kHeld & KEY_UP && selector > 0){selector--;redraw = true;consoleClear();}
+                        if(kHeld & KEY_DOWN && selector < fileCount-1){selector++;redraw = true;consoleClear();}
                     }
                     else{
-                        if(kDown & KEY_RIGHT){selectorA++;}
-                        if(kDown & KEY_LEFT){selectorA--;}
+                        if(kDown & KEY_RIGHT){selectorA++;redraw = true;consoleClear();}
+                        if(kDown & KEY_LEFT){selectorA--;redraw = true;consoleClear();}
 
-                        if(kDown & KEY_UP && selector > 0){selector--;}
-                        if(kDown & KEY_DOWN && selector < fileCount-1){selector++;}
+                        if(kDown & KEY_UP && selector > 0){selector--;redraw = true;consoleClear();}
+                        if(kDown & KEY_DOWN && selector < fileCount-1){selector++;redraw = true;consoleClear();}
                     }
 
                     if(selectorA >= MaxFormats){
@@ -2472,45 +2235,17 @@ int main(void) {
                         selectorA = MaxFormats-1;
                     }
 
-                    const char texts[MaxFormats][24] = {
-                        ".bmp [direct]",
-                        ".bmp [8bpp]",
-                        ".bmp [4bpp]",
-                        ".bin [NES]",
-                        ".bin [GB 2bpp]",
-                        ".bin [SNES 4bpp]",
-                        ".bin [GBA 4bpp]",
-                        ".pcx",
-                        ".pal [YY-CHR]",
-                        ".bin [SNES 8bpp]",
-                        ".pal [ARGB 1555]",
-                        ".acs [Custom format]",
-                        ".png"
-                    };
-                    const char formats[MaxFormats][6] = {
-                        ".bmp",
-                        ".bmp",
-                        ".bmp",
-                        ".bin",
-                        ".bin",
-                        ".bin",
-                        ".bin",
-                        ".pcx",
-                        ".pal",
-                        ".gif",
-                        ".pal",
-                        ".acs",
-                        ".png"
-                    };
                     strcpy(format,formats[selectorA]);
                     //obtener información del teclado
                     if(kDown & KEY_TOUCH){
                         if(touch.py > 112){
+                            redraw = true;consoleClear();
                             char key = getKeyboardKey(touch.px, touch.py);
                             if (key != '\0') handleKey(key);
                         }
                     }
                     if(kDown & KEY_A) {
+                        redraw = true;consoleClear();
                         if(selector < 0 || selector >= fileCount) {
                             printf("Error");
                         } else {
@@ -2528,17 +2263,16 @@ int main(void) {
                         goBack();
                     }
                     if(redraw){
-                        printf(fname);//nombre del archivo
-                        printf(texts[selectorA]);//extensión + información extra
-                        //separar para mostrar el explorador
+                        printf(fname);
+                        printf(texts[selectorA]);
                         printf("\n????????????????????????????????\n");
-                        listFiles();//dibujar información del explorador
+                        listFiles();
+                        redraw = false;
                     }
                 }
         //final del textConsole
         swiWaitForVBlank();
         }
-        oamUpdate(&oamSub);
     }
     /*
     esta sección la dedico a quien sea que haya leido todo mi código, sea una persona con tiempo libre o lo que sea.

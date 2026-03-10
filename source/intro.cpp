@@ -25,9 +25,10 @@
 
 static u16* gfx = SPRITE_GFX;
 
-static u16 bg0ofs_table[192];
-static u16 bg0vofs_table[192];
-static u16 gradientTable[192];
+//Queda pendiente lograr hacer que todo esto deje de ser global!
+static u16 bg0ofs_table[SCREEN_H];
+static u16 bg0vofs_table[SCREEN_H];
+static u16 gradientTable[SCREEN_H];
 
 static int fixedXoffset = 64;
 static s16 starDX[MAX_STARS];
@@ -84,10 +85,6 @@ static void vblank_handler(void)
                  DMA_REPEAT | // Don't stop DMA after the first copy.
                  DMA_COPY_HALFWORDS | 1 | // Copy one halfword each time
                  DMA_ENABLE);
-}
-static void doNothing(void)
-{
-
 }
 //8kb usados
 static inline void resetStar(int i) {
@@ -152,7 +149,6 @@ void updateStars(int i) {
     spriteX[i] = x;
     spriteY[i] = y;
 }
-
 
 void intro() {
     
@@ -296,7 +292,7 @@ void intro() {
     dmaStopSafe(0);
     dmaStopSafe(1);
     dmaStopSafe(2);
-    irqSet(IRQ_VBLANK, doNothing);
+    irqSet(IRQ_VBLANK, NULL);
     soundDisable();
     BG_PALETTE[0] = 0;
 }

@@ -1,2 +1,2 @@
-# 8 bpp, bitmap, set magenta as transparent color, not compressed
--gB8 -gb -gTFF00FF
+# 8 bpp, bitmap, set magenta as transparent color, compressed
+-gB8 -gb -gTFF00FF -gzl
