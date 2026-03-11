@@ -1837,7 +1837,6 @@ int main(void) {
     while(1) {
         //inicio del loop (global)
         //input
-        drawInfo();
         scanKeys();
         kDown = keysDown();
         kHeld = keysHeld();
@@ -1847,6 +1846,7 @@ int main(void) {
 
         if(currentSubMode == SUB_BITMAP)
         {   
+            drawInfo();
             if(screensSwapped == false){
                 if(kUp & KEY_TOUCH){//permitir volver a dibujar en un pixel
                     prevx = -1;
