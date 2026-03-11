@@ -58,7 +58,7 @@
 #define SURFACE_X 64
 #define SURFACE_Y 0
 #define SURFACE_W 128
-#define SURFACE_H 256
+#define SURFACE_H 128
 
 #define C_WHITE 65535
 #define C_RED 32799
@@ -84,6 +84,11 @@
 #define selector16oamId 65
 
 #define surfaceSize 128*128
+
+#define APP_PATH "/_nds/apixds/"
+#define CACHE_PATH  APP_PATH "cache/"
+#define ANIM_TEMP  CACHE_PATH "animation.temp"
+#define ANIM_TEMP_NEW CACHE_PATH "animation_new.temp"
 
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
@@ -162,18 +167,12 @@ int surfaceYres = 7;
 int stackYres = 7;
 int stackXres = 7;
 
-// Variables globales para controlar el modo actual
-enum subMode { SUB_TEXT, SUB_BITMAP };
-subMode currentSubMode = SUB_BITMAP;
-
-enum consoleMode { MODE_NO, LOAD_file, SAVE_file, IMAGE_SETTINGS, MODE_NEWIMAGE};
-consoleMode currentConsoleMode = MODE_NO;
-
 int resX = 7;
 int resY = 7;
 u32 kDown = 0;
 u32 kHeld = 0;
 u32 kUp = 0;
+
 bool stylusPressed = false;
 bool showGrid = false;
 bool drew = false;
@@ -189,6 +188,27 @@ bool screensSwapped = false;
 bool showBrushSettings = false;
 bool preview = true;
 bool redraw = true;
+
+int fps = 0;
+int frameCount = 0;
+time_t lastTime = 0;
+
+// Variables globales para controlar el modo actual
+enum subMode { SUB_TEXT, SUB_BITMAP };
+subMode currentSubMode = SUB_BITMAP;
+
+enum consoleMode { MODE_NO, LOAD_file, SAVE_file, IMAGE_SETTINGS, MODE_NEWIMAGE};
+consoleMode currentConsoleMode = MODE_NO;
+
+//animación
+struct Animation {
+    u16 frames      : 15 = 0;
+    u16 isPlaying   : 1  = 0;
+    u16 pos              = 0;
+    u8  speed            = 1;
+};
+Animation animation;
+
 enum {
     ACTION_NONE      = 0,
     ACTION_UP        = 1 << 0,
@@ -232,6 +252,16 @@ typedef enum {
 BrushMode brushMode = BRUSH_MODE_NORMAL;
 BrushSize brushSize = BRUSH_SIZE_1;
 
+ConsoleFont font = {
+    .gfx = fontTiles,
+    .pal = fontPal,
+    .numColors = fontPalLen>>1,
+    .bpp = 4,
+    .asciiOffset = 32,
+    .numChars = fontTilesLen>>5,
+};
+
+// FUNCIONES
 //función para pasar copiar datos rápidamente
 extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes);
 
@@ -763,6 +793,9 @@ void initBitmap()
     }
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
+    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 4, true, true);
+    consoleSetFont(&topConsole, &font);
+    oamClear(&oamSub, 0, 128);
     bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
 
     videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
@@ -883,14 +916,6 @@ oamSet(&oamSub, 21,//index
     false, false, false, false, false);
 }
 //====================================================================Compatibilidad con modos gráficos====================================|
-ConsoleFont font = {
-    .gfx = fontTiles,
-    .pal = fontPal,
-    .numColors = fontPalLen>>1,
-    .bpp = 4,
-    .asciiOffset = 32,
-    .numChars = fontTilesLen>>5,
-};
 void textMode()
 {
     if(currentSubMode == SUB_TEXT) return; // ya estamos en texto
@@ -940,7 +965,10 @@ void bitmapMode()
     vramSetBankA(VRAM_A_MAIN_BG);
     //vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
     int bgMain = bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
-
+    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 8, true, true);
+    consoleSetFont(&topConsole, &font);
+    oamClear(&oamSub, 0, 128);
+    
     videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
     vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
@@ -959,7 +987,39 @@ void bitmapMode()
     bgUpdate();
     oamUpdate(&oamSub);
 }
+void drawInfo(){
+    consoleClear();
+    printf("bpp: %d",paletteBpp);
+    printf("\nframe: %d / %d",animation.pos,animation.frames);
+    printf("\nOffset: %d",fileOffset);
+    printf("\nFPS: %d",fps);
+}
 //============================================================= SD CARD ===============================================|
+void createAppFolder(){
+    mkdir("/_nds/", 0777);
+    mkdir(APP_PATH, 0777);
+}
+void clearCache() {
+    // abrir el directorio
+    DIR* dir = opendir(CACHE_PATH);
+    if (dir) {
+        struct dirent* entry;
+        char filepath[256];
+        
+        while ((entry = readdir(dir)) != NULL) {
+            // ignorar . y ..
+            if (entry->d_name[0] == '.') continue;
+            
+            snprintf(filepath, sizeof(filepath), "%s%s", CACHE_PATH, entry->d_name);
+            remove(filepath);
+        }
+        closedir(dir);
+    }
+    
+    // recrear por si no existía
+    mkdir(CACHE_PATH, 0777);
+}
+
 bool saveArray(const char *path, void *array, size_t size) {
     FILE *file = fopen(path, "wb");  // write binary
     if (!file) return false;
@@ -974,6 +1034,106 @@ bool loadArray(const char *path, void *array, size_t size) {
     fread(array, 1, size, file);
     fclose(file);
     return true;
+}
+
+void loadAnimFrame(){
+    FILE *f = fopen(ANIM_TEMP, "rb");  // read binary
+
+    int size = 2<<surfaceXres<<surfaceYres;
+    fseek(f,animation.pos*size, SEEK_SET);
+    fread(surface,1,size,f);
+    fclose(f);
+}
+void saveAnimFrame(){
+    FILE *f = fopen(ANIM_TEMP, "r+b"); // abre sin borrar
+    if (!f) {
+        // si no existe aún, crearlo
+        f = fopen(ANIM_TEMP, "wb");
+    }
+    if (!f) return;
+
+    int size = 2 << surfaceXres << surfaceYres;
+    fseek(f, animation.pos * size, SEEK_SET); // ir al frame correcto
+    fwrite(surface, 1, size, f);              // escribir solo ese frame
+    fclose(f);
+}
+
+void deleteAnimFrame(u16 frameToDelete) {
+    if (animation.frames <= 1) return; // no borrar si es el único frame
+    
+    int size = 2 << surfaceXres << surfaceYres;
+
+    // Si es el último, simplemente truncar
+    if (frameToDelete >= animation.frames - 1) {
+        FILE* f = fopen(ANIM_TEMP, "ab");
+        if (!f) return;
+        ftruncate(fileno(f), (long)(animation.frames - 1) * size);
+        fclose(f);
+        animation.frames--;
+        if (animation.pos >= animation.frames) animation.pos = animation.frames - 1;
+        return;
+    }
+
+    FILE* src = fopen(ANIM_TEMP, "rb");
+    FILE* dst = fopen(ANIM_TEMP_NEW, "wb");
+    if (!src || !dst) return;
+
+    u8 buffer[size];
+
+    for (int i = 0; i < animation.frames; i++) {
+        fread(buffer, 1, size, src);
+        if (i == frameToDelete) continue;
+        fwrite(buffer, 1, size, dst);
+    }
+
+    fclose(src);
+    fclose(dst);
+
+    remove(ANIM_TEMP);
+    rename(ANIM_TEMP_NEW, ANIM_TEMP);
+
+    animation.frames--;
+    if (animation.pos >= animation.frames) animation.pos = animation.frames - 1;
+}
+
+void insertAnimFrame(u16 afterFrame) {
+    int size = 2 << surfaceXres << surfaceYres;
+    u8 empty[size];
+    memset(empty, 0, size);
+    
+    // Si es el último frame, simplemente append
+    if (afterFrame >= animation.frames - 1) {
+        FILE* f = fopen(ANIM_TEMP, "ab");
+        if (!f) return;
+        fwrite(empty, 1, size, f);
+        fclose(f);
+        animation.frames++;
+        animation.pos++;
+        return;
+    }
+    
+    FILE* src = fopen(ANIM_TEMP, "rb");
+    FILE* dst = fopen(ANIM_TEMP_NEW, "wb");
+    if (!src || !dst) return;
+    
+    u8 buffer[size];
+    
+    for (int i = 0; i < animation.frames; i++) {
+        fread(buffer, 1, size, src);
+        fwrite(buffer, 1, size, dst);
+        if (i == afterFrame) {
+            fwrite(empty, 1, size, dst);
+        }
+    }
+    
+    fclose(src);
+    fclose(dst);
+    
+    remove(ANIM_TEMP);
+    rename(ANIM_TEMP_NEW, ANIM_TEMP);
+    
+    animation.frames++;
+    animation.pos++;
 }
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys) {
@@ -1590,10 +1750,6 @@ void backupRead(){
     dmaCopyHalfWords(2, backup + index, surface, backupSize * sizeof(u16));
 }
 //====================================================================FPS==================================================================|
-int fps = 0;
-int frameCount = 0;
-time_t lastTime = 0;
-
 void initFPS() {
     lastTime = time(NULL);
     frameCount = 0;
@@ -1615,7 +1771,6 @@ int main(void) {
     // Intentar montar la SD
     // Intentar montar primero con DLDI (para flashcards DS/DS Lite)
     bool sd_ok = fatInitDefault();
-
     if(sd_ok) {
         // Verificar si estamos en una flashcard o DSi
         // En flashcards, la raíz suele ser "fat:/"
@@ -1632,7 +1787,9 @@ int main(void) {
         // Como último recurso, usar la raíz actual
         else {
             currentDir = opendir(".");
-        }
+        }        
+        createAppFolder();
+        clearCache();
     }
 
     if (!sd_ok) {
@@ -1668,7 +1825,7 @@ int main(void) {
     initBitmap();
     setEditorSprites();
     setBackupVariables();
-    //initFPS();
+    initFPS();
     initGradient();
     //aclarar la pantalla
     for(int i = 0; i < 16; i++)
@@ -1680,6 +1837,7 @@ int main(void) {
     while(1) {
         //inicio del loop (global)
         //input
+        drawInfo();
         scanKeys();
         kDown = keysDown();
         kHeld = keysHeld();
@@ -1738,25 +1896,66 @@ int main(void) {
                     } else {
                         stylusRepeat = true;
                     }
-                    if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//TOUCH EN SURFACE
-                        int localX = touch.px - SURFACE_X;
-                        int localY = touch.py;
+                    if (touch.px >= SURFACE_X && touch.px < (SURFACE_W + SURFACE_X)) {//TOUCH EN EL CENTRO!
+                        if(touch.py <= SURFACE_H){//APUNTA A LA SURFACE!
+                            int localX = touch.px - SURFACE_X;
+                            int localY = touch.py;
 
-                        int srcX = subSurfaceXoffset + (localX >> subSurfaceZoom);
-                        int srcY = subSurfaceYoffset + (localY >> subSurfaceZoom);
+                            int srcX = subSurfaceXoffset + (localX >> subSurfaceZoom);
+                            int srcY = subSurfaceYoffset + (localY >> subSurfaceZoom);
 
-                        if(srcY < 1<<surfaceYres)//comprobar si está en el rango
-                        {
-                            // --- ejecutar la herramienta seleccionada ---
-                            applyTool(srcX, srcY, stylusPressed);
+                            if(srcY < 1<<surfaceYres)//comprobar si está en el rango (solo por si acaso)
+                            {
+                                // --- ejecutar la herramienta seleccionada ---
+                                applyTool(srcX, srcY, stylusPressed);
 
-                            prevtpx = srcX;
-                            prevtpy = srcY;
+                                prevtpx = srcX;
+                                prevtpy = srcY;
 
-                            drawSurfaceMain(false);
-                            drawSurfaceBottom();
-                            drew = true;
-                            stylusPressed = true;
+                                drawSurfaceMain(false);
+                                drawSurfaceBottom();
+                                drew = true;
+                                stylusPressed = true;
+                                goto frameEnd;
+                            }
+                        }else{//apunta a los botones de abajo
+                            int row = (touch.py-SURFACE_H)>>4;
+                            int col = (touch.px-SURFACE_X)>>4;
+                            //PLACEHOLDER
+                            if(row == 3 && stylusPressed == false){
+                                stylusPressed = true;
+                                switch(col){
+                                    case 0://delete frame
+                                        deleteAnimFrame(animation.pos);
+                                    break;
+
+                                    case 1://add frame
+                                        insertAnimFrame(animation.pos);
+                                    break;
+
+                                    case 2://prev frame
+                                        saveAnimFrame();
+                                        if(animation.pos <= 0){
+                                            animation.pos = animation.frames;
+                                        }else{
+                                            animation.pos--;
+                                        }
+                                        loadAnimFrame();
+                                        drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
+                                    break;
+
+                                    case 5://next frame
+                                        saveAnimFrame();
+                                        if(animation.pos >= animation.frames){
+                                            animation.pos = 0;
+                                        }else{
+                                            animation.pos++;
+                                        }
+                                        loadAnimFrame();
+                                        drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
+                                    break;
+                                }
+                            }
                             goto frameEnd;
                         }
                     }
@@ -1913,9 +2112,7 @@ int main(void) {
                                             fileOffset += dir * (paletteBpp << 11);
 
                                             loadFile(imgFormat, currentFilePath, palette, surface);
-                                            drawSurfaceMain(true);
-                                            drawSurfaceBottom();
-                                            accurate = true;
+                                            drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
                                         }
                                     }
                                     goto frameEnd;
@@ -2044,6 +2241,8 @@ int main(void) {
                 }
 
                 frameEnd:
+
+                updateFPS();
 
                 if(kUp & KEY_TOUCH && drew == true){
                     drew = false;
