@@ -1,7 +1,6 @@
 -W3
 # disable alpha and set opaque bit for all pixels
--gT!
-
+-gT0
 # use lz77 compression
 -gzl
 

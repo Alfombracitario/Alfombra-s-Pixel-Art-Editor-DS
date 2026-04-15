@@ -48,7 +48,7 @@ static void vblank_handler(void)
     // 0 now.
     REG_BG0HOFS = bg0ofs_table[0];
     REG_BG0VOFS = bg0vofs_table[0];
-    BG_PALETTE[0] = gradientTable[0];
+    BG_PALETTE_SUB[0] = gradientTable[0];
 
     // Make sure that DMA can see the updated values of the arrays and the
     // updated values don't stay in the data cache.
@@ -78,7 +78,7 @@ static void vblank_handler(void)
 
     dmaSetParams(2,
                  &gradientTable[1],
-                 &BG_PALETTE[0], // Write to the background color
+                 &BG_PALETTE_SUB[0], // Write to the background color
                  DMA_SRC_INC | // Autoincrement source after each copy
                  DMA_DST_FIX | // Keep destination fixed
                  DMA_START_HBL | // Start copy at the start of horizontal blank
@@ -150,8 +150,26 @@ void updateStars(int i) {
     spriteY[i] = y;
 }
 
+void genGradient(){
+    static u8 isGreen = (rand() % 100 == 0) ? 5 : 0;//Easter egg!
+    static int frame = 0;
+    if(frame > 31) {return;}
+    int maxR = MIN(frame,30)>>1;
+    int maxB = MIN(frame,31);
+    for (int i = 0; i < 32; i++) {
+        int r = maxR - i;
+        if (r < 0) r = 0;
+
+        int b = (maxB - i) >> 1;
+        if(b < 0) b = 0;
+        u16 color = (b << 10) | r<<isGreen;
+        gradientTable[i] = color;
+        gradientTable[SCREEN_H-i] = color;
+    }
+    frame++;
+}
 void intro() {
-    
+    srand(time(NULL));
     setBrightness(3, -16);
     swiWaitForVBlank();
     irqSet(IRQ_VBLANK, vblank_handler);//configurar HDMA
@@ -188,17 +206,8 @@ void intro() {
     s16 xOffset = 1024;
     int brightness = -16;
 
-    for (int i = 0; i < 32; i++) {
-        int r = 15 - i;
-        if (r < 0) r = 0;
-
-        int b = (31 - i) >> 1;
-        u16 color = (b << 10) | r;
-        gradientTable[i] = color;
-        gradientTable[SCREEN_H-i] = color;
-    }
-
     while (1) {//loop
+        genGradient();//actualizamos el gradiente
         scanKeys();
         if (keysDown()) break;//si se apreta cualquier tecla, salir de la intro
 

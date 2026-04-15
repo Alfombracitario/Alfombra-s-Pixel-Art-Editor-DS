@@ -26,18 +26,16 @@
         reducir colores (posterización)
 
     añadir soporte a imagenes más grandes (cargando pedazos)
-
-    añadir un preview para el cargador de archivos
 */
 #include <nds.h>
 #include <stdio.h>
-#include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <string>
 
 #include <font.h>
 
+#include "timers.h"
 #include "files.h"
 #include "avdslib.h"
 #include "intro.h"//intro global para todos mis juegos
@@ -169,9 +167,13 @@ int stackXres = 7;
 
 int resX = 7;
 int resY = 7;
+u8 palEditSel = 0;
 u32 kDown = 0;
 u32 kHeld = 0;
 u32 kUp = 0;
+
+u32 frameStartTime = 0;
+u32 frameEndTime = 0;
 
 bool stylusPressed = false;
 bool showGrid = false;
@@ -189,10 +191,6 @@ bool showBrushSettings = false;
 bool preview = true;
 bool redraw = true;
 
-int fps = 0;
-int frameCount = 0;
-time_t lastTime = 0;
-
 // Variables globales para controlar el modo actual
 enum subMode { SUB_TEXT, SUB_BITMAP };
 subMode currentSubMode = SUB_BITMAP;
@@ -205,7 +203,7 @@ struct Animation {
     u16 frames      : 15 = 0;
     u16 isPlaying   : 1  = 0;
     u16 pos              = 0;
-    u8  speed            = 1;
+    u8  speed            = 2;//en frames
 };
 Animation animation;
 
@@ -267,48 +265,43 @@ extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes)
 
 void submitVRAM(bool full = false, bool _accurate = false, bool both = true)
 {
-    // ====== Cálculo de offsets y tamaños ======
-    int sizeBottom = full ? 98304 : 65536;
+    const u32 sizeBottom = full ? 98304 : 65536;
+    const u32 sizeTop    = surfaceSize << 1; // bytes
 
-    u16* srcTop = pixelsTop;
-    u16* dstTop = pixelsTopVRAM;
+    u16* srcTop    = pixelsTop;
+    u16* dstTop    = pixelsTopVRAM;
     u16* srcBottom = pixels;
     u16* dstBottom = pixelsVRAM;
 
-    // ====== Flush de caché antes de transferir ======
+    // Flush solo de fuente, no destino (VRAM no necesita flush de destino)
     if (_accurate) {
-        if (both) DC_FlushRange(srcTop, surfaceSize<<1);
+        if (both) DC_FlushRange(srcTop, sizeTop);
         DC_FlushRange(srcBottom, sizeBottom);
     }
 
-    // ====== Asegurar que DMA0 y DMA1 estén detenidos ======
+    // Detener canales
     DMA2_CR = 0;
     DMA3_CR = 0;
 
-    // ====== Iniciar DMA ======
     if (both) {
-        // Top screen
+        // Configurar DMA2 (top) — NO activar aún
         DMA2_SRC  = (u32)srcTop;
         DMA2_DEST = (u32)dstTop;
-        DMA2_CR   = (surfaceSize<<1) | DMA_ENABLE; // Halfwords
-    }
+        // DMA3 bottom simultáneo
+        DMA3_SRC  = (u32)srcBottom;
+        DMA3_DEST = (u32)dstBottom;
 
-    // Bottom screen
-    DMA3_SRC  = (u32)srcBottom;
-    DMA3_DEST = (u32)dstBottom;
-    DMA3_CR   = (sizeBottom >> 1) | DMA_ENABLE; // Halfwords
+        // Activar ambos en rápida sucesión para mayor solapamiento
+        DMA2_CR = (sizeTop  >> 1) | DMA_ENABLE;
+        DMA3_CR = (sizeBottom >> 1) | DMA_ENABLE;
 
-    // ====== Esperar a que terminen ======
-    if (both) {
         while ((DMA2_CR & DMA_ENABLE) || (DMA3_CR & DMA_ENABLE));
     } else {
-        while (DMA3_CR & DMA_ENABLE);
-    }
+        DMA3_SRC  = (u32)srcBottom;
+        DMA3_DEST = (u32)dstBottom;
+        DMA3_CR   = (sizeBottom >> 1) | DMA_ENABLE;
 
-    // ====== Flush final si VRAM se usará en GPU inmediatamente ======
-    if (_accurate) {
-        if (both) DC_FlushRange(dstTop, surfaceSize<<1);
-        DC_FlushRange(dstBottom, sizeBottom);
+        while (DMA3_CR & DMA_ENABLE);
     }
 }
 
@@ -764,6 +757,43 @@ void updatePal(int increment, int *palettePos)
     }
     AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
 }
+
+void updatePalEditBar(int index) {
+    int amount = palEdit[index];
+
+    // Actualizar barra
+    const u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
+    AVdrawRectangle(pixels, 192, amount << 1, (index << 3) + 40, 8, _barCol[index]);
+    // Limpiar el área
+    AVdrawRectangle(pixels, 192 + (amount << 1), 64 - (amount << 1), (index << 3) + 40, 8, C_BLACK);
+
+    // Actualizar el color
+    u16 _col = palEdit[0];
+    _col += palEdit[1] << 5;
+    _col += palEdit[2] << 10;
+    _col += 32768; // encender bit alpha
+    palette[palettePos] = _col;
+
+    AVdrawRectangle(pixels, 192 + ((palettePos & 15) << 2), 4, 64 + ((palettePos >> 4) << 2), 4, _col);
+
+    if (paletteBpp != 16) {
+        drawSurfaceMain(true);
+        drawSurfaceBottom();
+        AVdrawRectangle(pixels, 192, MAX_ALPHA, 32, 8, _col);
+    } else {
+        updated = true;
+        AVdrawRectangle(pixels, 192, MAX_ALPHA, 32, 8, _col);
+        AVdrawRectangle(pixels, 192 + paletteAlpha, 64 - paletteAlpha, 32, 8, 0);
+        if (palettePos == 0 && showGrid == true) {
+            drawGrid(AVinvertColor(_col));
+        }
+    }
+
+    // Contorno del color seleccionado
+    _col = AVinvertColor(_col);
+    AVdrawRectangleHollow(pixels, 192 + ((palettePos & 15) << 2), 4, 64 + ((palettePos >> 4) << 2), 4, _col);
+}
+
 //=================================================================Inicialización===================================================================================|
 inline void clearTop(){
     memset(pixelsTop,0,surfaceSize<<1);
@@ -955,7 +985,7 @@ void textKeyboardDraw(){
     listFiles();
     redraw = false;
 }
-void bitmapMode()
+void bitmapMode() 
 {
     if(currentSubMode == SUB_BITMAP) return; // ya estamos en bitmap
     currentSubMode = SUB_BITMAP;
@@ -965,7 +995,7 @@ void bitmapMode()
     vramSetBankA(VRAM_A_MAIN_BG);
     //vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
     int bgMain = bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
-    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 8, true, true);
+    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 4, true, true);
     consoleSetFont(&topConsole, &font);
     oamClear(&oamSub, 0, 128);
     
@@ -988,11 +1018,12 @@ void bitmapMode()
     oamUpdate(&oamSub);
 }
 void drawInfo(){
+    u32 ticks = frameEndTime - frameStartTime;
+    u32 cpuUsage = ((u64)(ticks) * 11732)>>16;
     consoleClear();
-    printf("bpp: %d",paletteBpp);
-    printf("\nframe: %d / %d",animation.pos,animation.frames);
-    printf("\nOffset: %d",fileOffset);
-    printf("\nFPS: %d",fps);
+    if(animation.frames != 0){printf("frame: %d / %d",animation.pos,animation.frames);}
+    printf("\n\n\n\n%d",fps);
+    printf("\n%lu",cpuUsage);
 }
 //============================================================= SD CARD ===============================================|
 void createAppFolder(){
@@ -1036,7 +1067,7 @@ bool loadArray(const char *path, void *array, size_t size) {
     return true;
 }
 
-void loadAnimFrame(){
+void loadAnimFrame(u16* surface){
     FILE *f = fopen(ANIM_TEMP, "rb");  // read binary
 
     int size = 2<<surfaceXres<<surfaceYres;
@@ -1057,20 +1088,29 @@ void saveAnimFrame(){
     fwrite(surface, 1, size, f);              // escribir solo ese frame
     fclose(f);
 }
-
-void deleteAnimFrame(u16 frameToDelete) {
-    if (animation.frames <= 1) return; // no borrar si es el único frame
+void nextAnimFrame(){
+    saveAnimFrame();
+    if(animation.pos >= animation.frames){
+    animation.pos = 0;
+    }else{
+        animation.pos++;
+    }
+    loadAnimFrame(surface);
+    drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
+}
+void deleteAnimFrame() {
+    if (animation.frames <= 0) return; // no borrar si es el único frame
     
     int size = 2 << surfaceXres << surfaceYres;
 
     // Si es el último, simplemente truncar
-    if (frameToDelete >= animation.frames - 1) {
+    if (animation.pos >= animation.frames) {
         FILE* f = fopen(ANIM_TEMP, "ab");
         if (!f) return;
         ftruncate(fileno(f), (long)(animation.frames - 1) * size);
         fclose(f);
         animation.frames--;
-        if (animation.pos >= animation.frames) animation.pos = animation.frames - 1;
+        if (animation.pos >= animation.frames) animation.pos = animation.frames;
         return;
     }
 
@@ -1080,9 +1120,9 @@ void deleteAnimFrame(u16 frameToDelete) {
 
     u8 buffer[size];
 
-    for (int i = 0; i < animation.frames; i++) {
+    for (int i = 0; i < animation.frames+1; i++) {
         fread(buffer, 1, size, src);
-        if (i == frameToDelete) continue;
+        if (i == animation.pos) continue;
         fwrite(buffer, 1, size, dst);
     }
 
@@ -1096,19 +1136,19 @@ void deleteAnimFrame(u16 frameToDelete) {
     if (animation.pos >= animation.frames) animation.pos = animation.frames - 1;
 }
 
-void insertAnimFrame(u16 afterFrame) {
+void insertAnimFrame() {
     int size = 2 << surfaceXres << surfaceYres;
     u8 empty[size];
     memset(empty, 0, size);
     
     // Si es el último frame, simplemente append
-    if (afterFrame >= animation.frames - 1) {
+    if (animation.pos >= animation.frames) {
         FILE* f = fopen(ANIM_TEMP, "ab");
         if (!f) return;
         fwrite(empty, 1, size, f);
         fclose(f);
-        animation.frames++;
-        animation.pos++;
+        animation.frames++;//increase the amount of frames
+        nextAnimFrame();//we go to the next frame.
         return;
     }
     
@@ -1118,10 +1158,10 @@ void insertAnimFrame(u16 afterFrame) {
     
     u8 buffer[size];
     
-    for (int i = 0; i < animation.frames; i++) {
+    for (int i = 0; i < animation.frames +1; i++) {
         fread(buffer, 1, size, src);
         fwrite(buffer, 1, size, dst);
-        if (i == afterFrame) {
+        if (i == animation.pos) {
             fwrite(empty, 1, size, dst);
         }
     }
@@ -1133,8 +1173,49 @@ void insertAnimFrame(u16 afterFrame) {
     rename(ANIM_TEMP_NEW, ANIM_TEMP);
     
     animation.frames++;
-    animation.pos++;
+    nextAnimFrame();
 }
+void playAnimation(){
+    if(animation.frames < 1){return;}
+
+    while(animation.isPlaying){
+        // Preparar el frame ANTES de esperar VBlank
+        animation.pos++;
+        if(animation.pos > animation.frames){animation.pos = 0;}
+        loadAnimFrame(stack);
+        DC_FlushRange(stack, (1 << surfaceXres) * (1 << surfaceYres) << 1);
+
+        // Ahora esperar input y throttling
+        for(int i = 0; i < 1; i++){
+            scanKeys();
+            if(keysDown()){animation.isPlaying = false;}
+            timerStop();
+            swiWaitForVBlank();
+            timerContinue();
+        }
+        frameEndTime = timerRead();updateFPS();drawInfo();timerReset();frameStartTime = timerRead();
+        // Copiar a VRAM inmediatamente después del VBlank del último wait
+        int sw = 1 << surfaceXres;
+        int sh = 1 << surfaceYres;
+
+        if(paletteBpp == 16){
+            for(int y = 0; y < sh; y++){
+                u16* dst = pixelsTopVRAM + (y << 7);
+                u16* src = stack         + (y << surfaceXres);
+                dmaCopy(src, dst, sw * 2);
+            }
+        } else {
+            for(int y = 0; y < sh; y++){
+                u16* dst = pixelsTopVRAM + (y << 7);
+                u16* src = stack         + (y << surfaceXres);
+                for(int x = 0; x < sw; x++){
+                    dst[x] = palette[src[x]];
+                }
+            }
+        }
+    }
+}
+
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys) {
     int actions = ACTION_NONE;
@@ -1444,6 +1525,29 @@ void pasteFromStackToSurface()
     }
 }
 
+//para paletas
+inline void copyPalette(){
+    int iterations = 1<<paletteBpp;
+    for(int i = 0; i < iterations;i++){
+        stack[i] = palette[i+paletteOffset];
+    }
+}
+
+inline void pastePalette(){
+    int iterations = 1<<paletteBpp;
+    for(int i = 0; i < iterations;i++){
+        palette[i+paletteOffset] = stack[i];
+    }
+}
+
+inline void copyColor(){
+    stack[0] = palette[palettePos];
+}
+
+inline void pasteColor(){
+    palette[palettePos] = stack[0];
+}
+
 void flipH() {
     copyFromSurfaceToStack();
 
@@ -1749,22 +1853,6 @@ void backupRead(){
     int index = backupIndex * backupSize;
     dmaCopyHalfWords(2, backup + index, surface, backupSize * sizeof(u16));
 }
-//====================================================================FPS==================================================================|
-void initFPS() {
-    lastTime = time(NULL);
-    frameCount = 0;
-    fps = 0;
-}
-
-void updateFPS() {
-    frameCount++;
-    time_t now = time(NULL);
-    if(now != lastTime) {  // pasó 1 segundo real
-        fps = frameCount;
-        frameCount = 0;
-        lastTime = now;
-    }
-}
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
     defaultExceptionHandler();// Mostrar crasheos
@@ -1827,6 +1915,7 @@ int main(void) {
     setBackupVariables();
     initFPS();
     initGradient();
+    initTimers();
     //aclarar la pantalla
     for(int i = 0; i < 16; i++)
     {
@@ -1835,7 +1924,6 @@ int main(void) {
     }
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
     while(1) {
-        //inicio del loop (global)
         //input
         scanKeys();
         kDown = keysDown();
@@ -1846,8 +1934,11 @@ int main(void) {
 
         if(currentSubMode == SUB_BITMAP)
         {   
+            frameEndTime = timerRead();
             drawInfo();
-            if(screensSwapped == false){
+            timerReset();
+            frameStartTime = timerRead();
+            //if(screensSwapped == false){
                 if(kUp & KEY_TOUCH){//permitir volver a dibujar en un pixel
                     prevx = -1;
                     prevy = -1;
@@ -1860,25 +1951,71 @@ int main(void) {
                 }
                 else//paleta de colores
                 {
-                    if(kDown & KEY_DOWN)
-                    {
-                        updatePal(16, &palettePos);
+                    if(kHeld & KEY_SELECT){//selector
+                        if(kDown & (KEY_UP | KEY_DOWN)){
+                            if(kDown & KEY_UP){
+                                palEditSel--;
+                            }else{
+                                palEditSel++;
+                            }
+                            palEditSel &= 3;
+                            if(paletteBpp != 16 && palEditSel == 0){
+                                palEditSel = 1;
+                            }
+                            //draw the rectangle with the selected bar.
+                            AVdrawRectangle(pixels,254,2,32,32,C_BLACK);
+                            AVdrawRectangle(pixels,254,2,32+(palEditSel<<3),8,C_YELLOW);
+                            updated = true;
+                            goto frameEnd;//you can only use one input per frame, nothing more to check here!
+                        }
+                        if(kDown & (KEY_RIGHT|KEY_LEFT)){
+                            if(palEditSel != 0){
+                                u8 index = palEditSel-1;
+                                if(kDown & KEY_RIGHT)
+                                    palEdit[index]++;
+                                else
+                                    palEdit[index]--;
+                                
+                                palEdit[index] &= 31;
+                                updatePalEditBar(index);
+                            }
+                            else{
+                                if(kDown & KEY_RIGHT)
+                                    paletteAlpha++;
+                                else
+                                    paletteAlpha--;
+                                
+                                paletteAlpha &= MAX_ALPHA;
+                                //el color no cambia, pero la barra sí
+                                AVdrawRectangle(pixels,192,paletteAlpha,32,8,palette[palettePos]);
+                                //Limpiar el area
+                                AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
+                            }
+                        updated = true;
                         goto frameEnd;
+                        }
                     }
-                    if(kDown & KEY_UP)
-                    {
-                        updatePal(-16, &palettePos);
-                        goto frameEnd;
-                    }
-                    if(kDown & KEY_LEFT)
-                    {
-                        updatePal(-1, &palettePos);
-                        goto frameEnd;
-                    }
-                    if(kDown & KEY_RIGHT)
-                    {
-                        updatePal(1, &palettePos);
-                        goto frameEnd;
+                    else{
+                        if(kDown & KEY_DOWN)
+                        {
+                            updatePal(16, &palettePos);
+                            goto frameEnd;
+                        }
+                        if(kDown & KEY_UP)
+                        {
+                            updatePal(-16, &palettePos);
+                            goto frameEnd;
+                        }
+                        if(kDown & KEY_LEFT)
+                        {
+                            updatePal(-1, &palettePos);
+                            goto frameEnd;
+                        }
+                        if(kDown & KEY_RIGHT)
+                        {
+                            updatePal(1, &palettePos);
+                            goto frameEnd;
+                        }
                     }
                 }
                 if(kDown & KEY_R || kDown & KEY_Y){
@@ -1926,11 +2063,11 @@ int main(void) {
                                 stylusPressed = true;
                                 switch(col){
                                     case 0://delete frame
-                                        deleteAnimFrame(animation.pos);
+                                        deleteAnimFrame();
                                     break;
 
                                     case 1://add frame
-                                        insertAnimFrame(animation.pos);
+                                        insertAnimFrame();
                                     break;
 
                                     case 2://prev frame
@@ -1940,19 +2077,17 @@ int main(void) {
                                         }else{
                                             animation.pos--;
                                         }
-                                        loadAnimFrame();
+                                        loadAnimFrame(surface);
                                         drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
                                     break;
 
+                                    case 3://play animation
+                                        animation.isPlaying = true;
+                                        playAnimation();
+                                    break;
+                                    
                                     case 5://next frame
-                                        saveAnimFrame();
-                                        if(animation.pos >= animation.frames){
-                                            animation.pos = 0;
-                                        }else{
-                                            animation.pos++;
-                                        }
-                                        loadAnimFrame();
-                                        drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
+                                        nextAnimFrame();
                                     break;
                                 }
                             }
@@ -2180,45 +2315,12 @@ int main(void) {
                                 _col = AVinvertColor(_col);
                                 AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                                 goto frameEnd;
-
-                            }else{
+                            }else{//creador de colores en modo 
                                 int index = (touch.py-40)>>3;
-                                int amount = (touch.px-192)>>1;
-                                palEdit[index] = amount;
+                                palEdit[index] = (touch.px-192)>>1;
 
-                                //actualizar barra
-                                u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
-                                AVdrawRectangle(pixels,192,amount<<1,(index<<3)+40,8,_barCol[index]);
-                                //Limpiar el area
-                                AVdrawRectangle(pixels,192+(amount<<1),64-(amount<<1),(index<<3)+40,8,C_BLACK);
+                                updatePalEditBar(index);
 
-                                //actualizar el color
-                                u16 _col = palEdit[0];
-                                _col += palEdit[1]<<5;
-                                _col += palEdit[2]<<10;
-                                _col += 32768;//encender pixel
-                                palette[palettePos] = _col;
-                                
-                                AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
-
-                                if(paletteBpp != 16){//Solo actualizar en modo index
-                                    drawSurfaceMain(true);
-                                    drawSurfaceBottom();
-                                    //dibujar arriba el nuevo color generado
-                                    AVdrawRectangle(pixels,192,MAX_ALPHA,32,8,_col);
-                                }else{
-                                    updated = true;
-                                    //color seleccionado/alpha
-                                    AVdrawRectangle(pixels,192,MAX_ALPHA,32,8,_col);
-                                    AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
-                                    if(palettePos == 0 && showGrid == true){
-                                        drawGrid(AVinvertColor(_col));
-                                    }
-                                }
-
-                                //dibujar el contorno del color seleccionado
-                                _col = AVinvertColor(_col);
-                                AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
                                 goto frameEnd;
                             }
                         }
@@ -2241,7 +2343,6 @@ int main(void) {
                 }
 
                 frameEnd:
-
                 updateFPS();
 
                 if(kUp & KEY_TOUCH && drew == true){
@@ -2252,10 +2353,12 @@ int main(void) {
                     applyActions(actions);
                     drawSurfaceBottom();
                 }
+                timerStop();
                 //implementación del modo reposo para ahorrar energía
                 for(int i = 0; i<sleepingFrames; i++){
                     swiWaitForVBlank();
                 }
+                timerContinue();
                 if(sleepTimer < 0 && sleepingFrames < 4){
                     sleepingFrames++;
                     sleepTimer = (60*(sleepingFrames<<2));//cada vez le toma más frames dormirse
@@ -2270,10 +2373,10 @@ int main(void) {
                 accurate = false;
                 both = false;
                 //fin del loop de modo bitmap (pantalla de abajo)
-            }
-            else{
-
-            }
+            //}
+            //else{
+            //  screenSwapped
+            //}
         }
         else//=======================================CONSOLA DE TEXTO=======================================>
         {
@@ -2402,7 +2505,6 @@ int main(void) {
                                 loadFile(imgFormat,currentFilePath,palette,surface);
                             }
 
-                            updated = true;
                             drawSurfaceMain(true);drawSurfaceBottom();
                             drawColorPalette();
                             setBackupVariables();
@@ -2474,29 +2576,10 @@ int main(void) {
         }
     }
     /*
-    esta sección la dedico a quien sea que haya leido todo mi código, sea una persona con tiempo libre o lo que sea.
-        y sí, vengo a justificar algunas de mis horribles practicas.
-        en estos meses de desarrollo he aprendido muchas cosas, este fué mi primer proyecto para la DS y me gustaría hablar de
-        desiciones que tomé al hacer el código y posibles preguntas
+    Esta sección está hecha para quienes leyeron el código!
 
-    1. ¿por qué modo bitmap16bpp para toda la pantalla?
-        es por flexibilidad y además, es más fácil, no debo ahorrar VRAM realmente...
-
-    2. ¿por qué uso GOTO?
-        sé que es considerado una malísima practica, y en varios casos es verdad.
-        Sin embargo, si te fijas bien, en este códgio solo hay 2 labels (no sé cómo se llaman lol)
-        textConsole y frameEnd, estos saltos de hecho son muy útiles, irónicamente para ordenar más el proyecto y
-        porque pueden mejorar el rendimiento considerablemente, ya que generalmente los uso para saltarme código que no necesito ejecutar
-
-    3. ¿por qué tantos magic numbers?
-        esta es mala mía 100%, en los proyectos en paralelo que he hecho esto ya lo hago JAJAJ
-
-    4. por qué está casi todo en main.cpp?
-        un poco de lo que decía antes de la 1, es mi primer código en el que uso más de un archivo de hecho.
-    
-    5. por qué haces estos comentarios tontos o cosas sin sentido como esta?
-        programo por diversión y mi único compañero soy yo mismo!
-        imagínate llevar programando en el mismo archivo por meses, en algún momento te pondrás chistoso.
+    solo voy a decir que estoy trabajando en ordenar un poco este código
+    - Alfombra de marzo
     */
    return 0;
 }

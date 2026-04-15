@@ -4,10 +4,8 @@
 
 /*
     To-do list
-    more palettes formats
     GBA tiled 8bpp
     finish .acs
-    preview
 */
 #include <nds.h>
 #include <stdio.h>
@@ -20,6 +18,7 @@
 
 extern int fileOffset;
 extern u32 kDown;
+
 //funciones auxiliares para formatos retro
 FILE* openFileOffset(const char* path, int* dataSize){
     const int pageSize = paletteBpp<<11;
@@ -482,7 +481,7 @@ int importPal1555(const char* path, u16* pal) {
     int palSize = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    if (palSize > paletteSize*3) {
+    if (palSize > paletteSize<<1) {
         printf("Error: the file is too big\n");
         fclose(f);
         return -1;
