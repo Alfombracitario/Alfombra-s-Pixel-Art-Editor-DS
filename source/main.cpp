@@ -87,7 +87,6 @@
 #define CACHE_PATH  APP_PATH "cache/"
 #define ANIM_TEMP  CACHE_PATH "animation.temp"
 #define ANIM_TEMP_NEW CACHE_PATH "animation_new.temp"
-
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 //static PrintConsole bottomConsole;
@@ -129,6 +128,7 @@ int palettePos = 0;
 int paletteBpp = 8;
 
 int paletteOffset = 0;
+int bucketMode;
 bool nesMode = false;
 bool usesPages = false;
 u8 palEdit[3];
@@ -1017,13 +1017,47 @@ void bitmapMode()
     bgUpdate();
     oamUpdate(&oamSub);
 }
+char bucketText[2][6] = {"Color","Index"};
 void drawInfo(){
     u32 ticks = frameEndTime - frameStartTime;
     u32 cpuUsage = ((u64)(ticks) * 11732)>>16;
     consoleClear();
     if(animation.frames != 0){printf("frame: %d / %d",animation.pos,animation.frames);}
-    printf("\n\n\n\n%d",fps);
+    else{
+        printf("\n");
+    }
+    if(bucketMode != 0){
+        printf("\nBucket: replace %s", bucketText[bucketMode-1]);
+    }
+    else{
+        printf("\n");
+    }
+    printf("\n\n%d",fps);
     printf("\n%lu",cpuUsage);
+}
+//====================================================================Backups==============================================================|
+void setBackupVariables(){
+    backupIndex = 0;
+    backupSize = 1<<surfaceXres<<surfaceYres;
+    backupMax = 131072>>surfaceXres>>surfaceYres;
+    //reinicia el backup
+    for(int i = 0; i < 131072; i++){
+        backup[i] = 0;
+    }
+}
+void backupWrite(){
+    backupIndex++;
+    if(backupIndex >= backupMax){
+        backupIndex = 0;
+    }
+    int index = backupIndex*backupSize;
+    //copia surface a backup+ su index
+    dmaCopyHalfWords(2, surface, backup + index, backupSize * sizeof(u16));
+}
+void backupRead(){
+    // Calculamos el índice del bloque en el array backup
+    int index = backupIndex * backupSize;
+    dmaCopyHalfWords(2, backup + index, surface, backupSize * sizeof(u16));
 }
 //============================================================= SD CARD ===============================================|
 void createAppFolder(){
@@ -1320,16 +1354,12 @@ void handleKey(char key) {
             break;
 
         case '>': // enter
-            // aquí podrías procesar el texto completo, por ejemplo:
-            // guardarTexto(fname);
-            // limpiar el buffer si quieres:
             fname[0] = '\0';
+            kDown = KEY_START;
             break;
 
         case '<': // salir
-            // aquí pones tu código de salida o retorno
-            // por ejemplo:
-            // returnToMenu();
+            kDown = KEY_SELECT;
             break;
 
         default:
@@ -1346,9 +1376,44 @@ void handleKey(char key) {
             break;
     }
 }
+void replaceIndex(u16 *surface, u16 oldColor, u16 newColor){
+    //guardar un backup para undo 
+    backupWrite();
+    //ahora sí reemplazamos todos los indices
+    int size  = 1 << surfaceXres<<surfaceYres;
+    for(int i = 0; i < size; i++){
+        if(surface[i] == oldColor) surface[i] = newColor;
+    }
+}
+
+void swapIndex(u16 oldIndex, u16 newIndex){
+    // Swap en paleta
+    u16 tmp = palette[oldIndex];
+    palette[oldIndex] = palette[newIndex];
+    palette[newIndex] = tmp;
+
+    // Swap de índices en el surface
+    int total = 1<<surfaceXres<<surfaceYres;
+    for(int i = 0; i < total; i++){
+        if(surface[i] == oldIndex) surface[i] = newIndex;
+        else if(surface[i] == newIndex) surface[i] = oldIndex;
+    }
+    //actualizamos ahora todo visualmente
+    if(paletteBpp != 16){
+        drawSurfaceMain();
+        drawSurfaceBottom();
+    }
+    updatePal(0,&palettePos);
+    drawColorPalette();
+}
 void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres, int yres) {
     if (oldColor == newColor) return;
-
+    if(bucketMode == 1){
+        replaceIndex(surface,oldColor,newColor);
+        return;
+    }else if(bucketMode == 2){
+        swapIndex(oldColor,newColor);
+    }
     int width  = 1 << xres;
     int height = 1 << yres;
     if (x < 0 || y < 0 || x >= width || y >= height) return;
@@ -1382,7 +1447,6 @@ void floodFill(u16 *surface, int x, int y, u16 oldColor, u16 newColor, int xres,
         }
     }
 }
-
 
 void applyTool(int x, int y, bool dragging) {
     if(x == prevx && y == prevy){return;}
@@ -1527,28 +1591,28 @@ void pasteFromStackToSurface()
 
 //para paletas
 inline void copyPalette(){
-    int iterations = 1<<paletteBpp;
+    int iterations = (paletteBpp >= 8) ? 256 : (1 << paletteBpp);
     for(int i = 0; i < iterations;i++){
         stack[i] = palette[i+paletteOffset];
     }
 }
 
 inline void pastePalette(){
-    int iterations = 1<<paletteBpp;
+    int iterations = (paletteBpp >= 8) ? 256 : (1 << paletteBpp);
     for(int i = 0; i < iterations;i++){
         palette[i+paletteOffset] = stack[i];
     }
 }
 
 inline void copyColor(){
-    stack[0] = palette[palettePos];
+    stack[0] = palette[palettePos+paletteOffset];
 }
 
 inline void pasteColor(){
-    palette[palettePos] = stack[0];
+    palette[palettePos+paletteOffset] = stack[0];
 }
 
-void flipH() {
+void flipH(){
     copyFromSurfaceToStack();
 
     int ysize = 1 << stackYres;
@@ -1828,31 +1892,6 @@ void shiftLeftWrap() {
 
     pasteFromStackToSurface();
 }
-
-//====================================================================Backups==============================================================|
-void setBackupVariables(){
-    backupIndex = 0;
-    backupSize = 1<<surfaceXres<<surfaceYres;
-    backupMax = 131072>>surfaceXres>>surfaceYres;
-    //reinicia el backup
-    for(int i = 0; i < 131072; i++){
-        backup[i] = 0;
-    }
-}
-void backupWrite(){
-    backupIndex++;
-    if(backupIndex >= backupMax){
-        backupIndex = 0;
-    }
-    int index = backupIndex*backupSize;
-    //copia surface a backup+ su index
-    dmaCopyHalfWords(2, surface, backup + index, backupSize * sizeof(u16));
-}
-void backupRead(){
-    // Calculamos el índice del bloque en el array backup
-    int index = backupIndex * backupSize;
-    dmaCopyHalfWords(2, backup + index, surface, backupSize * sizeof(u16));
-}
 //====================================================================MAIN==================================================================================================================|
 int main(void) {
     defaultExceptionHandler();// Mostrar crasheos
@@ -2117,7 +2156,14 @@ int main(void) {
                             int col = touch.px > 24 ? 1 : 0;
                             int row = touch.py > 40 ? 2 : 0;
                             //convertir col+row a un valor único
+                            ToolType prevTool = currentTool;
                             currentTool = (ToolType)(row + col);
+                            if(currentTool == prevTool && currentTool == TOOL_BUCKET){
+                                bucketMode++;
+                                if(bucketMode > 2){
+                                    bucketMode = 0;
+                                }
+                            }
                             if(currentTool == TOOL_BRUSH){
                                 setBrushSettingsSprites(true);
                             }else{
@@ -2288,7 +2334,7 @@ int main(void) {
                             stylusPressed = true;
                             goto frameEnd;
                         }
-                        if(touch.py < 40 && touch.py > 32 && paletteBpp == 16){//transparencia
+                        else if(touch.py < 40 && touch.py > 32 && paletteBpp == 16){//transparencia
                             paletteAlpha = (touch.px-192);
 
                             AVdrawRectangle(pixels,192,63,32,8,palette[palettePos]);
@@ -2299,7 +2345,7 @@ int main(void) {
                         }
                         else if(touch.py >= 40 && touch.py < 64)//creador de colores
                         {
-                            //hay mucho código hardcodeado aquí para mejorar el rendimiento
+                            //hay mucho código hardcodeado aquí para mejorar el rendimiento :>
                             if(nesMode){
                                 int ystart = 48;
                                 int row = (touch.px-192)>>2;
@@ -2324,8 +2370,33 @@ int main(void) {
                                 goto frameEnd;
                             }
                         }
-                        else//seleccionar un color en la paleta
-                        {
+                        else if(touch.py > 128){//botones inferior derecha
+                            //obtenemos el indice a base de donde apretamos
+                            int row = (touch.px-192)>>4;
+                            int pos = row;
+                            switch(pos){
+                                case 0:
+                                    copyPalette();
+                                break;
+
+                                case 1:
+                                    pastePalette();
+                                break;
+
+                                case 2:
+                                    copyColor();
+                                break;
+
+                                case 3:
+                                    pasteColor();
+                                break;
+                            }
+                            drawColorPalette();
+                            updatePal(0,&palettePos);
+                            updated = true;
+                            goto frameEnd;
+                        }
+                        else{//seleccionar un color en la paleta
                             if(stylusPressed == false)
                             {
                                 int row = (touch.py-64)>>2;
