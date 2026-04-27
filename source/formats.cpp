@@ -1368,3 +1368,229 @@ int png_import(const char *path, u16 *surf, u16 *pal) {
     paletteSize = 256;
     return 0;
 }
+/*
+// ─── EXPORT GIF ────────────────────────────────────────────────────────────────
+// Requiere: animation.frames, animation.delay (en centésimas de segundo),
+//           surfaceXres, surfaceYres, ANIM_TEMP, palette[256] por frame.
+
+void exportGIF(const char* path) {
+    int pixSize = 2 << surfaceXres << surfaceYres;
+    int blkSize = pixSize + PALETTE_SIZE;  // PALETTE_SIZE = 512
+    int sw = 1 << surfaceXres;
+    int sh = 1 << surfaceYres;
+    int totalFrames = animation.frames + 1;
+
+    // Abrir archivo de salida
+    int error = 0;
+    GifFileType* gif = EGifOpenFileName(path, false, &error);
+    if (!gif) return;
+
+    EGifSetGifVersion(gif, true);  // GIF89a (necesario para animación)
+
+    // Cabecera global — usamos la paleta del frame 0 como global
+    // (GIFLIB la requiere aunque luego cada frame use su paleta local)
+    FILE* tmp = fopen(ANIM_TEMP, "rb");
+    if (!tmp) { EGifCloseFile(gif, &error); return; }
+
+    u16 framePalette[256];
+    u8  framePixels[pixSize];
+
+    // Leer paleta del frame 0 para la global
+    fseek(tmp, pixSize, SEEK_SET);
+    fread(framePalette, 1, PALETTE_SIZE, tmp);
+
+    // Construir ColorMapObject global desde framePalette
+    ColorMapObject* globalMap = GifMakeMapObject(256, NULL);
+    for (int i = 0; i < 256; i++) {
+        u16 c = framePalette[i];
+        // BGR555 → RGB888
+        globalMap->Colors[i].Red   = ((c >>  0) & 0x1F) << 3;
+        globalMap->Colors[i].Green = ((c >>  5) & 0x1F) << 3;
+        globalMap->Colors[i].Blue  = ((c >> 10) & 0x1F) << 3;
+    }
+
+    EGifPutScreenDesc(gif, sw, sh, 8, 0, globalMap);
+    GifFreeMapObject(globalMap);
+
+    // Netscape loop extension (loop infinito)
+    u8 loopBlock[] = { 1, 0x00, 0x00 };
+    EGifPutExtensionLeader(gif, APPLICATION_EXT_FUNC_CODE);
+    EGifPutExtensionBlock(gif, 11, "NETSCAPE2.0");
+    EGifPutExtensionBlock(gif, sizeof(loopBlock), loopBlock);
+    EGifPutExtensionTrailer(gif);
+
+    // Escribir cada frame
+    for (int f = 0; f < totalFrames; f++) {
+        fseek(tmp, (long)f * blkSize, SEEK_SET);
+        fread(framePixels, 1, pixSize, tmp);
+        fread(framePalette, 1, PALETTE_SIZE, tmp);
+
+        // Paleta local del frame
+        ColorMapObject* localMap = GifMakeMapObject(256, NULL);
+        for (int i = 0; i < 256; i++) {
+            u16 c = framePalette[i];
+            localMap->Colors[i].Red   = ((c >>  0) & 0x1F) << 3;
+            localMap->Colors[i].Green = ((c >>  5) & 0x1F) << 3;
+            localMap->Colors[i].Blue  = ((c >> 10) & 0x1F) << 3;
+        }
+
+        // Graphic Control Extension: delay y disposición
+        GraphicsControlBlock gcb;
+        gcb.DisposalMode    = DISPOSE_DO_NOT;
+        gcb.UserInputFlag   = false;
+        gcb.DelayTime       = animation.delay;  // centésimas de segundo
+        gcb.TransparentColor = NO_TRANSPARENT_COLOR;
+
+        u8 gcbBuf[4];
+        EGifGCBToExtension(&gcb, gcbBuf);
+        EGifPutExtension(gif, GRAPHICS_EXT_FUNC_CODE, sizeof(gcbBuf), gcbBuf);
+
+        // Descriptor del frame (imagen)
+        EGifPutImageDesc(gif, 0, 0, sw, sh, false, localMap);
+        GifFreeMapObject(localMap);
+
+        // Píxeles fila por fila
+        // En modo indexed: framePixels contiene índices de 8 bits empaquetados en u16
+        // Necesitamos expandir a u8 por píxel
+        if (paletteBpp != 16) {
+            // Los píxeles ya SON índices, pero están en u16 (solo el byte bajo importa)
+            u8 row[sw];
+            for (int y = 0; y < sh; y++) {
+                for (int x = 0; x < sw; x++) {
+                    // framePixels está como u8, índice directo
+                    row[x] = framePixels[y * sw + x];
+                }
+                EGifPutLine(gif, row, sw);
+            }
+        } else {
+            // Modo directo (BGR555): buscar color más cercano en la paleta del frame
+            // (raro exportar GIF en modo directo, pero cubrimos el caso)
+            u8 row[sw];
+            u16* pixels16 = (u16*)framePixels;
+            for (int y = 0; y < sh; y++) {
+                for (int x = 0; x < sw; x++) {
+                    u16 px = pixels16[y * sw + x];
+                    // Buscar índice más cercano en framePalette
+                    int best = 0, bestDist = INT_MAX;
+                    for (int i = 0; i < 256; i++) {
+                        int dr = (int)((px >>  0)&0x1F) - (int)((framePalette[i] >>  0)&0x1F);
+                        int dg = (int)((px >>  5)&0x1F) - (int)((framePalette[i] >>  5)&0x1F);
+                        int db = (int)((px >> 10)&0x1F) - (int)((framePalette[i] >> 10)&0x1F);
+                        int dist = dr*dr + dg*dg + db*db;
+                        if (dist < bestDist) { bestDist = dist; best = i; }
+                    }
+                    row[x] = (u8)best;
+                }
+                EGifPutLine(gif, row, sw);
+            }
+        }
+    }
+
+    fclose(tmp);
+    EGifCloseFile(gif, &error);
+}
+
+
+// ─── IMPORT GIF ────────────────────────────────────────────────────────────────
+// Redimensiona la superficie al tamaño del GIF.
+// Requiere: que surfaceXres/surfaceYres sean modificables y que
+//           exista alguna función para reinicializar la superficie (ajústala).
+
+// Devuelve el log2 del valor (para convertir dimensiones a los campos Xres/Yres)
+static int log2i(int v) {
+    int r = 0;
+    while (v > 1) { v >>= 1; r++; }
+    return r;
+}
+
+void importGIF(const char* path) {
+    int error = 0;
+    GifFileType* gif = DGifOpenFileName(path, &error);
+    if (!gif) return;
+
+    if (DGifSlurp(gif) != GIF_OK) {
+        DGifCloseFile(gif, &error);
+        return;
+    }
+
+    if (gif->ImageCount < 1) {
+        DGifCloseFile(gif, &error);
+        return;
+    }
+
+    int gw = gif->SWidth;
+    int gh = gif->SHeight;
+
+    // Redimensionar superficie al tamaño del GIF
+    // Forzamos a la potencia de 2 más cercana por encima si el motor lo requiere,
+    // o usamos el tamaño exacto si tu sistema lo admite.
+    surfaceXres = log2i(gw);  // ajusta si tu sistema usa otra representación
+    surfaceYres = log2i(gh);
+
+    int sw = 1 << surfaceXres;
+    int sh = 1 << surfaceYres;
+    int pixSize = sw * sh * 2;  // u16 por píxel (índices en u16, solo byte bajo)
+    int blkSize = pixSize + PALETTE_SIZE;
+
+    // Crear/reemplazar ANIM_TEMP
+    FILE* out = fopen(ANIM_TEMP, "wb");
+    if (!out) {
+        DGifCloseFile(gif, &error);
+        return;
+    }
+
+    animation.frames = gif->ImageCount - 1;
+    animation.pos    = 0;
+
+    for (int f = 0; f < gif->ImageCount; f++) {
+        SavedImage*    img = &gif->SavedImages[f];
+        ColorMapObject* cm = img->ImageDesc.ColorMap
+                           ? img->ImageDesc.ColorMap
+                           : gif->SColorMap;
+
+        // Leer delay del GCB si existe
+        GraphicsControlBlock gcb;
+        if (DGifSavedExtensionToGCB(gif, f, &gcb) == GIF_OK) {
+            animation.delay = gcb.DelayTime;  // centésimas de segundo
+        }
+
+        // Escribir píxeles como u16 (índice en byte bajo, byte alto = 0)
+        // El RasterBits de GIFLIB ya son índices u8
+        u8*  src8   = img->RasterBits;
+        u16  pixRow[sw];
+
+        for (int y = 0; y < sh && y < gh; y++) {
+            for (int x = 0; x < sw; x++) {
+                if (x < img->ImageDesc.Width)
+                    pixRow[x] = src8[y * img->ImageDesc.Width + x];
+                else
+                    pixRow[x] = 0;
+            }
+            fwrite(pixRow, sizeof(u16), sw, out);
+        }
+
+        // Escribir paleta: convertir RGB888 → BGR555
+        u16 pal555[256];
+        memset(pal555, 0, sizeof(pal555));
+        if (cm) {
+            int count = cm->ColorCount < 256 ? cm->ColorCount : 256;
+            for (int i = 0; i < count; i++) {
+                u8 r = cm->Colors[i].Red   >> 3;
+                u8 g = cm->Colors[i].Green >> 3;
+                u8 b = cm->Colors[i].Blue  >> 3;
+                pal555[i] = r | (g << 5) | (b << 10);
+            }
+        }
+        fwrite(pal555, 1, PALETTE_SIZE, out);
+    }
+
+    fclose(out);
+    DGifCloseFile(gif, &error);
+
+    // Cargar el primer frame al editor
+    loadAnimFrame(surface);
+    drawSurfaceMain(true);
+    drawSurfaceBottom();
+    accurate = true;
+}
+*/

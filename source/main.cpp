@@ -1022,9 +1022,9 @@ void drawInfo(){
     u32 ticks = frameEndTime - frameStartTime;
     u32 cpuUsage = ((u64)(ticks) * 11732)>>16;
     consoleClear();
-    if(animation.frames != 0){printf("frame: %d / %d",animation.pos,animation.frames);}
+    if(animation.frames != 0){printf("frame: %d / %d \nanim speed: %d",animation.pos,animation.frames,animation.speed);}
     else{
-        printf("\n");
+        printf("\n\n");
     }
     if(bucketMode != 0){
         printf("\nBucket: replace %s", bucketText[bucketMode-1]);
@@ -1032,7 +1032,7 @@ void drawInfo(){
     else{
         printf("\n");
     }
-    printf("\n\n%d",fps);
+    printf("\n%d",fps);
     printf("\n%lu",cpuUsage);
 }
 //====================================================================Backups==============================================================|
@@ -1100,48 +1100,65 @@ bool loadArray(const char *path, void *array, size_t size) {
     fclose(file);
     return true;
 }
+// ===================================================== ANIMATION ========================================== |
+#define PALETTE_SIZE (256 * 2)  // 512 bytes, fijo siempre
 
-void loadAnimFrame(u16* surface){
-    FILE *f = fopen(ANIM_TEMP, "rb");  // read binary
-
-    int size = 2<<surfaceXres<<surfaceYres;
-    fseek(f,animation.pos*size, SEEK_SET);
-    fread(surface,1,size,f);
-    fclose(f);
+// Tamaño total de un bloque en disco (píxeles + paleta)
+static inline int blockSize() {
+    return (2 << surfaceXres << surfaceYres) + PALETTE_SIZE;
 }
-void saveAnimFrame(){
-    FILE *f = fopen(ANIM_TEMP, "r+b"); // abre sin borrar
-    if (!f) {
-        // si no existe aún, crearlo
-        f = fopen(ANIM_TEMP, "wb");
-    }
+
+void loadAnimFrame(u16* surface) {
+    FILE* f = fopen(ANIM_TEMP, "rb");
     if (!f) return;
 
-    int size = 2 << surfaceXres << surfaceYres;
-    fseek(f, animation.pos * size, SEEK_SET); // ir al frame correcto
-    fwrite(surface, 1, size, f);              // escribir solo ese frame
+    int pixSize  = 2 << surfaceXres << surfaceYres;
+    int blkSize  = pixSize + PALETTE_SIZE;
+
+    fseek(f, (long)animation.pos * blkSize, SEEK_SET);
+    fread(surface, 1, pixSize, f);          // píxeles
+    fread(palette,  1, PALETTE_SIZE, f);    // paleta del frame
     fclose(f);
 }
-void nextAnimFrame(){
+
+void saveAnimFrame() {
+    FILE* f = fopen(ANIM_TEMP, "r+b");
+    if (!f) f = fopen(ANIM_TEMP, "wb");
+    if (!f) return;
+
+    int pixSize = 2 << surfaceXres << surfaceYres;
+    int blkSize = pixSize + PALETTE_SIZE;
+
+    fseek(f, (long)animation.pos * blkSize, SEEK_SET);
+    fwrite(surface, 1, pixSize,     f);     // píxeles
+    fwrite(palette,  1, PALETTE_SIZE, f);   // paleta del frame
+    fclose(f);
+}
+
+void nextAnimFrame() {
     saveAnimFrame();
-    if(animation.pos >= animation.frames){
-    animation.pos = 0;
-    }else{
+    if (animation.pos >= animation.frames) {
+        animation.pos = 0;
+    } else {
         animation.pos++;
     }
     loadAnimFrame(surface);
-    drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
+    drawColorPalette();
+    updatePal(0,&palettePos);
+    drawSurfaceMain(true); drawSurfaceBottom(); accurate = true;
 }
-void deleteAnimFrame() {
-    if (animation.frames <= 0) return; // no borrar si es el único frame
-    
-    int size = 2 << surfaceXres << surfaceYres;
 
-    // Si es el último, simplemente truncar
+void deleteAnimFrame() {
+    if (animation.frames <= 0) return;
+
+    int pixSize = 2 << surfaceXres << surfaceYres;
+    int blkSize = pixSize + PALETTE_SIZE;
+
+    // Último frame: truncar
     if (animation.pos >= animation.frames) {
         FILE* f = fopen(ANIM_TEMP, "ab");
         if (!f) return;
-        ftruncate(fileno(f), (long)(animation.frames - 1) * size);
+        ftruncate(fileno(f), (long)(animation.frames - 1) * blkSize);
         fclose(f);
         animation.frames--;
         if (animation.pos >= animation.frames) animation.pos = animation.frames;
@@ -1150,19 +1167,18 @@ void deleteAnimFrame() {
 
     FILE* src = fopen(ANIM_TEMP, "rb");
     FILE* dst = fopen(ANIM_TEMP_NEW, "wb");
-    if (!src || !dst) return;
+    if (!src || !dst) { if (src) fclose(src); if (dst) fclose(dst); return; }
 
-    u8 buffer[size];
+    u8 buffer[blkSize];
 
-    for (int i = 0; i < animation.frames+1; i++) {
-        fread(buffer, 1, size, src);
-        if (i == animation.pos) continue;
-        fwrite(buffer, 1, size, dst);
+    for (int i = 0; i <= animation.frames; i++) {  // frames+1 bloques en disco
+        fread(buffer, 1, blkSize, src);
+        if (i == animation.pos) continue;           // saltar el frame borrado
+        fwrite(buffer, 1, blkSize, dst);
     }
 
     fclose(src);
     fclose(dst);
-
     remove(ANIM_TEMP);
     rename(ANIM_TEMP_NEW, ANIM_TEMP);
 
@@ -1171,85 +1187,91 @@ void deleteAnimFrame() {
 }
 
 void insertAnimFrame() {
-    int size = 2 << surfaceXres << surfaceYres;
-    u8 empty[size];
-    memset(empty, 0, size);
-    
-    // Si es el último frame, simplemente append
+    int pixSize = 2 << surfaceXres << surfaceYres;
+    int blkSize = pixSize + PALETTE_SIZE;
+
+    // Bloque vacío: píxeles a 0, paleta actual del editor
+    u8 empty[blkSize];
+    memset(empty, 0, pixSize);
+    memcpy(empty + pixSize, palette, PALETTE_SIZE);  // hereda paleta actual
+
+    // Insertar al final: append directo
     if (animation.pos >= animation.frames) {
         FILE* f = fopen(ANIM_TEMP, "ab");
         if (!f) return;
-        fwrite(empty, 1, size, f);
+        fwrite(empty, 1, blkSize, f);
         fclose(f);
-        animation.frames++;//increase the amount of frames
-        nextAnimFrame();//we go to the next frame.
+        animation.frames++;
+        nextAnimFrame();
         return;
     }
-    
+
     FILE* src = fopen(ANIM_TEMP, "rb");
     FILE* dst = fopen(ANIM_TEMP_NEW, "wb");
-    if (!src || !dst) return;
-    
-    u8 buffer[size];
-    
-    for (int i = 0; i < animation.frames +1; i++) {
-        fread(buffer, 1, size, src);
-        fwrite(buffer, 1, size, dst);
+    if (!src || !dst) { if (src) fclose(src); if (dst) fclose(dst); return; }
+
+    u8 buffer[blkSize];
+
+    for (int i = 0; i <= animation.frames; i++) {
+        fread(buffer, 1, blkSize, src);
+        fwrite(buffer, 1, blkSize, dst);
         if (i == animation.pos) {
-            fwrite(empty, 1, size, dst);
+            fwrite(empty, 1, blkSize, dst);  // insertar frame nuevo después del actual
         }
     }
-    
+
     fclose(src);
     fclose(dst);
-    
     remove(ANIM_TEMP);
     rename(ANIM_TEMP_NEW, ANIM_TEMP);
-    
+
     animation.frames++;
     nextAnimFrame();
 }
-void playAnimation(){
-    if(animation.frames < 1){return;}
 
-    while(animation.isPlaying){
-        // Preparar el frame ANTES de esperar VBlank
+void playAnimation() {
+    if (animation.frames < 1) return;
+
+    int pixSize = 2 << surfaceXres << surfaceYres;
+    int sw = 1 << surfaceXres;
+    int sh = 1 << surfaceYres;
+
+    while (animation.isPlaying) {
         animation.pos++;
-        if(animation.pos > animation.frames){animation.pos = 0;}
-        loadAnimFrame(stack);
-        DC_FlushRange(stack, (1 << surfaceXres) * (1 << surfaceYres) << 1);
+        if (animation.pos > animation.frames) animation.pos = 0;
 
-        // Ahora esperar input y throttling
-        for(int i = 0; i < 1; i++){
+        loadAnimFrame(stack);   // carga píxeles a stack Y actualiza palette[]
+        DC_FlushRange(stack, pixSize);
+
+        for (int i = 0; i < animation.speed; i++) {
             scanKeys();
-            if(keysDown()){animation.isPlaying = false;}
+            if (keysDown()) animation.isPlaying = false;
             timerStop();
             swiWaitForVBlank();
             timerContinue();
         }
-        frameEndTime = timerRead();updateFPS();drawInfo();timerReset();frameStartTime = timerRead();
-        // Copiar a VRAM inmediatamente después del VBlank del último wait
-        int sw = 1 << surfaceXres;
-        int sh = 1 << surfaceYres;
 
-        if(paletteBpp == 16){
-            for(int y = 0; y < sh; y++){
+        frameEndTime = timerRead(); updateFPS(); drawInfo(); timerReset();
+        frameStartTime = timerRead();
+
+        if (paletteBpp == 16) {
+            for (int y = 0; y < sh; y++) {
                 u16* dst = pixelsTopVRAM + (y << 7);
                 u16* src = stack         + (y << surfaceXres);
                 dmaCopy(src, dst, sw * 2);
             }
         } else {
-            for(int y = 0; y < sh; y++){
+            // palette[] ya fue actualizado por loadAnimFrame
+            for (int y = 0; y < sh; y++) {
                 u16* dst = pixelsTopVRAM + (y << 7);
                 u16* src = stack         + (y << surfaceXres);
-                for(int x = 0; x < sw; x++){
+                for (int x = 0; x < sw; x++) {
                     dst[x] = palette[src[x]];
                 }
             }
         }
     }
 }
-
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys) {
     int actions = ACTION_NONE;
@@ -2127,6 +2149,14 @@ int main(void) {
                                     
                                     case 5://next frame
                                         nextAnimFrame();
+                                    break;
+
+                                    case 6://less speed
+                                        if(animation.speed > 1) animation.speed--;
+                                    break;
+
+                                    case 7://more speed
+                                        animation.speed++;
                                     break;
                                 }
                             }
