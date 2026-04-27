@@ -91,10 +91,7 @@
 static PrintConsole topConsole;
 //static PrintConsole bottomConsole;
 
-//IWRAM, 32KB usados
-u16 surface[16384]__attribute__((section(".iwram"))); // 32 KB en IWRAM
-
-//RAM 360,960 bytes usados (en arrays)
+u16 surface[16384];//ya no tiene un espacio extra en RAM dado que su acceso es super lineal y predecible, además de que es muy grande
 u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
 u16* bgPreviewGfx = NULL;
@@ -103,7 +100,7 @@ u16 *gfx16;
 u16 *gfxBG;
 u16 pixelsTop[surfaceSize];//copia en RAM (es más rápida)
 u16 pixels[49152];
-u16 palette[256];
+u16 __attribute__((section(".dtcm"))) palette[256];//ram rápida sin cache miss, perfecto para acceso aleatorio de paletas
 
 u16 stack[surfaceSize];// para operaciones temporales
 u16 backup[131072];//para undo/redo y cargar imagenes 256kb 
@@ -167,7 +164,7 @@ int stackXres = 7;
 
 int resX = 7;
 int resY = 7;
-u8 palEditSel = 0;
+u8  palEditSel = 1;
 u32 kDown = 0;
 u32 kHeld = 0;
 u32 kUp = 0;
@@ -335,7 +332,6 @@ void initGradient(){
     }
     irqSet(IRQ_VBLANK, vblank_handler);//configurar HDMA
 }
-
 
 static inline bool brushPatternPass(int x, int y, BrushMode mode)
 {
@@ -565,16 +561,26 @@ void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color){
     }
 }
 
-inline void drawGrid(u16 color){
-    int separation = 1<<(subSurfaceZoom+gridSkips);
-    int rep = (128>>subSurfaceZoom)>>gridSkips;
-    for(int i = 0; i < rep; i++)
+void drawGrid(u16 color){
+    int separation = 1 << (subSurfaceZoom + gridSkips);
+    int rep = (128 >> subSurfaceZoom) >> gridSkips;
+    
+    int mask = separation - 1;
+    int phaseX = (subSurfaceXoffset << subSurfaceZoom) & mask;
+    int phaseY = (subSurfaceYoffset << subSurfaceZoom) & mask;
+    
+    for(int i = 0; i < rep + 1; i++)
     {
-        AVdrawHline(pixels,64,192,i*separation,color);
-        AVdrawVline(pixels,0,128,64+(i*separation),color);
+        int y = i*separation - phaseY;
+        int x = 64 + i*separation - phaseX;
+        
+        if(y >= 0 && y < 128)
+            AVdrawHline(pixels, 64, 192, y, color);
+        
+        if(x >= 64 && x < 192)
+            AVdrawVline(pixels, 0, 127, x, color);
     }
 }
-
 //=========================================================DRAW SURFACE========================================================================
 inline void drawSurfaceMain(bool full = true)
 {
@@ -892,14 +898,14 @@ void setEditorSprites(){
     u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
     dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
 
-            oamSet(&oamSub, selector24oamID,
-            0, 16,
-            0,
-            15, // opaco
-            SpriteSize_32x32, SpriteColorFormat_Bmp,
-            gfx32,
-            -1,
-            false, false, false, false, false);
+    oamSet(&oamSub, selector24oamID,
+    0, 16,
+    0,
+    15, // opaco
+    SpriteSize_32x32, SpriteColorFormat_Bmp,
+    gfx32,
+    -1,
+    false, false, false, false, false);
     
     gfxBrushSettings = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
     dmaCopy(GFXbrushSettingsBitmap, gfxBrushSettings, 32*32*2);
@@ -2104,16 +2110,15 @@ int main(void) {
 
                             if(srcY < 1<<surfaceYres)//comprobar si está en el rango (solo por si acaso)
                             {
-                                // --- ejecutar la herramienta seleccionada ---
-                                applyTool(srcX, srcY, stylusPressed);
-
-                                prevtpx = srcX;
-                                prevtpy = srcY;
-
-                                drawSurfaceMain(false);
-                                drawSurfaceBottom();
-                                drew = true;
-                                stylusPressed = true;
+                                if(!(stylusPressed && prevtpx == srcX && prevtpy == srcY)){
+                                    applyTool(srcX, srcY, stylusPressed);
+                                    prevtpx = srcX;
+                                    prevtpy = srcY;
+                                    drawSurfaceMain(false);
+                                    drawSurfaceBottom();
+                                    drew = true;
+                                    stylusPressed = true;
+                                }
                                 goto frameEnd;
                             }
                         }else{//apunta a los botones de abajo
