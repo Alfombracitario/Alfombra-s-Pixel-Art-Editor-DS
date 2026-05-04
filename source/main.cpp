@@ -50,6 +50,10 @@
 #include "GFXmore.h"
 #include "GFXbrushSettings.h"
 #include "GFXselector8.h"
+#include "GFXrgbSliders.h"
+#include "GFXselector5.h"
+#include "GFXrgbSliderSel.h"
+
 //Macros
 #define SCREEN_W 256
 #define SCREEN_H 192
@@ -79,9 +83,16 @@
 #define selector24oamID 64
 #define brushSettingsOamId 24
 #define brushSettingsSelectorOamId 22
-#define selector16oamId 65
+#define selector16oamId 64
+#define rgbSliderOamId 66
+#define paletteOamId 26
+#define paletteSelOamId 25
+#define rgbSliderSelOamId 65
 
 #define surfaceSize 128*128
+
+#define rgbSliderX SURFACE_X+SURFACE_W
+#define rgbSliderY 32
 
 #define APP_PATH "/_nds/apixds/"
 #define CACHE_PATH  APP_PATH "cache/"
@@ -95,11 +106,7 @@ u16 surface[16384];//ya no tiene un espacio extra en RAM dado que su acceso es s
 u16* pixelsTopVRAM = (u16*)BG_GFX;
 u16* pixelsVRAM = (u16*)BG_GFX_SUB;
 u16* bgPreviewGfx = NULL;
-u16 *gfx32;
-u16 *gfx16;
-u16 *gfxBG;
 u16 pixelsTop[surfaceSize];//copia en RAM (es más rápida)
-u16 pixels[49152];
 u16 __attribute__((section(".dtcm"))) palette[256];//ram rápida sin cache miss, perfecto para acceso aleatorio de paletas
 
 u16 stack[surfaceSize];// para operaciones temporales
@@ -107,10 +114,21 @@ u16 backup[131072];//para undo/redo y cargar imagenes 256kb
 
 u16 gradientTable[SCREEN_H];
 
+u16 *gfx32;
+u16 *gfx16;
+u16 *gfxBG;
+u16 *gfxRGBsliders;
+u16 *gfxRgbSliderSel;
+u16 *gfxPalette;
+u16 *gfx5;
 u8 paletteAlpha = MAX_ALPHA;//indicador del alpha actual, útil para 16bpp
 //ideal añadir un array para guardar más frames
 
 touchPosition touch;
+
+int bgCanvas;
+int bgUI;
+
 
 int backupMax = 8;
 int backupSize = surfaceSize<<1;
@@ -262,44 +280,23 @@ extern "C" void memcpy_fast_arm9(const void* src, void* dst, unsigned int bytes)
 
 void submitVRAM(bool full = false, bool _accurate = false, bool both = true)
 {
-    const u32 sizeBottom = full ? 98304 : 65536;
-    const u32 sizeTop    = surfaceSize << 1; // bytes
+    const u32 sizeTop = surfaceSize << 1; // 128x128 x2 bytes
 
-    u16* srcTop    = pixelsTop;
-    u16* dstTop    = pixelsTopVRAM;
-    u16* srcBottom = pixels;
-    u16* dstBottom = pixelsVRAM;
+    if (_accurate)
+        DC_FlushRange(pixelsTop, sizeTop);
 
-    // Flush solo de fuente, no destino (VRAM no necesita flush de destino)
-    if (_accurate) {
-        if (both) DC_FlushRange(srcTop, sizeTop);
-        DC_FlushRange(srcBottom, sizeBottom);
-    }
-
-    // Detener canales
     DMA2_CR = 0;
+    DMA2_SRC  = (u32)pixelsTop;
+    DMA2_DEST = (u32)pixelsTopVRAM;
+    DMA2_CR   = (sizeTop >> 1) | DMA_ENABLE;
+    while (DMA2_CR & DMA_ENABLE);
+
+    // Sub BG3 canvas: DMA desde pixelsTop también, misma data
     DMA3_CR = 0;
-
-    if (both) {
-        // Configurar DMA2 (top) — NO activar aún
-        DMA2_SRC  = (u32)srcTop;
-        DMA2_DEST = (u32)dstTop;
-        // DMA3 bottom simultáneo
-        DMA3_SRC  = (u32)srcBottom;
-        DMA3_DEST = (u32)dstBottom;
-
-        // Activar ambos en rápida sucesión para mayor solapamiento
-        DMA2_CR = (sizeTop  >> 1) | DMA_ENABLE;
-        DMA3_CR = (sizeBottom >> 1) | DMA_ENABLE;
-
-        while ((DMA2_CR & DMA_ENABLE) || (DMA3_CR & DMA_ENABLE));
-    } else {
-        DMA3_SRC  = (u32)srcBottom;
-        DMA3_DEST = (u32)dstBottom;
-        DMA3_CR   = (sizeBottom >> 1) | DMA_ENABLE;
-
-        while (DMA3_CR & DMA_ENABLE);
-    }
+    DMA3_SRC  = (u32)pixelsTop;
+    DMA3_DEST = (u32)pixelsVRAM; // ahora apunta al BG3 sub 128x128
+    DMA3_CR   = (sizeTop >> 1) | DMA_ENABLE;
+    while (DMA3_CR & DMA_ENABLE);
 }
 
 static void vblank_handler(void)
@@ -562,28 +559,12 @@ void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color){
 }
 
 void drawGrid(u16 color){
-    int separation = 1 << (subSurfaceZoom + gridSkips);
-    int rep = (128 >> subSurfaceZoom) >> gridSkips;
-    
-    int mask = separation - 1;
-    int phaseX = (subSurfaceXoffset << subSurfaceZoom) & mask;
-    int phaseY = (subSurfaceYoffset << subSurfaceZoom) & mask;
-    
-    for(int i = 0; i < rep + 1; i++)
-    {
-        int y = i*separation - phaseY;
-        int x = 64 + i*separation - phaseX;
-        
-        if(y >= 0 && y < 128)
-            AVdrawHline(pixels, 64, 192, y, color);
-        
-        if(x >= 64 && x < 192)
-            AVdrawVline(pixels, 0, 127, x, color);
-    }
+    return;
 }
 //=========================================================DRAW SURFACE========================================================================
 inline void drawSurfaceMain(bool full = true)
 {
+    updated = true;
     both = true;
     int xres = 1 << surfaceXres;
     int yres = 1 << surfaceYres;
@@ -612,99 +593,83 @@ inline void drawSurfaceMain(bool full = true)
         }
     }
 }
-extern "C" void __attribute__((target("arm"))) drawSurfaceBottom2x(u16*, u16*, int, int);
-extern "C" void __attribute__((target("arm"))) drawSurfaceBottom4x(u16*, u16*, int, int);
-extern "C" void __attribute__((target("arm"))) drawSurfaceBottom8x(u16*, u16*, int, int);
-extern "C" void __attribute__((target("arm"))) drawSurfaceBottom16x(u16*, u16*, int, int);
-extern "C" void __attribute__((target("arm"))) drawSurfaceBottom32x(u16*, u16*, int, int);
+void drawSurfaceBottom(){//esta función ya ni debería existir.
+    s16 scale = 256 >> subSurfaceZoom;
 
-__attribute__((optimize("jump-tables")))
-void drawSurfaceBottom(){
-    updated = true;
+    bgSetScale(bgCanvas, scale, scale);
+    bgSetScroll(bgCanvas,
+        subSurfaceXoffset - (64 >> subSurfaceZoom), // centrar en x=64..191
+        subSurfaceYoffset);
+    bgUpdate();
 
-    u16 *srcBase = pixelsTop + ((subSurfaceYoffset) << 7) + (subSurfaceXoffset);
-    u16 *dstBase = pixels + 64; // centrado
-
-    switch (subSurfaceZoom) {
-        case 0://si no hay zoom
-            for (int i = 0; i < 128; i++) {//sí, siempre copiar las 128, es para arreglar errores visuales
-                u16* src = pixelsTop + (i<< 7);
-                u16* dst = pixels + ((i << 8) + 64);
-                memcpy_fast_arm9(src, dst, 256);
-            }
-            break;
-        
-        //256: tamaño horizontal (en bytes) del layer 3 de la capa de arriba
-        //512: lo mismo pero abajo
-        case 1: drawSurfaceBottom2x(srcBase, dstBase, 256, 512); break;
-        case 2: drawSurfaceBottom4x(srcBase, dstBase, 256, 512); break;
-        case 3: drawSurfaceBottom8x(srcBase, dstBase, 256, 512); break;
-        case 4: drawSurfaceBottom16x(srcBase, dstBase,256, 512); break;
-        case 5: drawSurfaceBottom32x(srcBase, dstBase,256, 512); break;
-
-        default:
-            // fórmula general
-            {
-                int blockSize = 128 >> subSurfaceZoom;
-                int yrepeat   = 1 << subSurfaceZoom;
-                int xoffset   = subSurfaceXoffset;
-                int yoffset   = subSurfaceYoffset;
-
-                int dstY = 0;
-
-                for (int i = 0; i < blockSize; i++) {
-                    int srcY = i + yoffset;
-                    u16* srcRow = pixelsTop + (srcY << 8) + xoffset;
-
-                    for (int k = 0; k < yrepeat; k++) {
-                        u16* dstRow = pixels + (dstY << 8) + 64;
-
-                        for (int j = 0; j < 128; j++) {
-                            dstRow[j] = srcRow[j >> subSurfaceZoom];
-                        }
-                        dstY++;
-                    }
-                }
-            }
-            break;
-    }
     if(showGrid){drawGrid(AVinvertColor(palette[paletteOffset]));
         accurate = true;
     }
-    
 }
+//==================== PALETAS ==========|
+//función auxiliar para esta situación específica
+static void drawSliderRect(u16* buf, int x, int row, int w, u16 color) {
+    u32 color32 = ((u32)color << 16) | color;
+    u16* base = buf + row * 64 + x;
 
-void drawColorPalette()
-{
-    for(int i = 0; i < 16; i++)//vertical
-    {
-        for(int j = 0; j < 16; j++)//horizontal
-        {
-            AVdrawRectangle(pixels,192+(j<<2),4,64+(i<<2),4,palette[(i<<4)+j]);
-        }
+    for (int j = 0; j < 8; j++) {
+        u16* p16 = base;
+        int i = 0;
+
+        if ((uintptr_t)p16 & 2) { *p16++ = color; i++; }
+
+        u32* p32 = (u32*)p16;
+        int w32 = (w - i) >> 1;
+        for (int k = 0; k < w32; k++) *p32++ = color32;
+
+        if ((w - i) & 1) *(u16*)p32 = color;
+
+        base += 64;
     }
-    updated = true;
+}
+static void draw4xRectIn64w(u16* buf, int x, int y, u16 col) {
+    u32 col32 = ((u32)col << 16) | col;
+    u32* p = (u32*)(buf + x + (y << 6));
+
+    p[0] = col32; p[1] = col32; p += 32;
+    p[0] = col32; p[1] = col32; p += 32;
+    p[0] = col32; p[1] = col32; p += 32;
+    p[0] = col32; p[1] = col32;
 }
 
 void drawNesPalette()
 {
-    AVdrawRectangle(pixels,192,64,32,16,0);
+    for(int i = 0; i < 16*64; i++){
+        gfxRGBsliders[i] = C_BLACK;
+    }
     //dibujar paleta
     for(int i = 0; i < 4; i++)//vertical
     {
         for(int j = 0; j < 16; j++)//horizontal
         {
-            AVdrawRectangle(pixels,192+(j<<2),4,48+(i<<2),4,nesPalette[(i<<4)+j]);
+            draw4xRectIn64w(gfxRGBsliders,j<<2,(i<<2)+16,nesPalette[(i<<4)+j]);
+        }
+    }
+    updated = true;
+}
+inline void drawColorPalette()
+{
+    //dibujar paleta
+    for(int i = 0; i < 16; i++)//vertical
+    {
+        for(int j = 0; j < 16; j++)//horizontal
+        {
+            draw4xRectIn64w(gfxPalette,j<<2,i<<2,palette[(i<<4)+j]);
         }
     }
     updated = true;
 }
 
-//==================== PALETAS ==========|
+
 void updatePal(int increment, int *palettePos)
 {
     //primero debemos saber si estamos en un rango válido
-    if(*palettePos + increment < 0 || *palettePos + increment > paletteSize){
+    if(*palettePos + increment < 0 || *palettePos + increment > paletteSize-1){
         return;
     }
     updated = true;
@@ -714,9 +679,6 @@ void updatePal(int increment, int *palettePos)
     int posy = *palettePos >>4;
 
     u16 _col = palette[*palettePos];
-
-    //reparamos el slot anterior
-    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,_col);
 
     //nueva información
     *palettePos+=increment;
@@ -736,11 +698,11 @@ void updatePal(int increment, int *palettePos)
 
         for(int i = 0; i < 3; i++)
         {
-            AVdrawRectangle(pixels,192,_barColAmount[i]<<1,(i<<3)+40,8,_barCol[i]);//barra de color
-            AVdrawRectangle(pixels,192+(_barColAmount[i]<<1),64-(_barColAmount[i]<<1),(i<<3)+40,8,C_BLACK);//area negra de fondo
+            int y = (i<<3)+8;
+            drawSliderRect(gfxRGBsliders,0,y,_barColAmount[i]<<1,_barCol[i]);
+            drawSliderRect(gfxRGBsliders,_barColAmount[i]<<1,y,64-(_barColAmount[i]<<1),C_BLACK);
         }
-
-        AVdrawRectangle(pixels,192,paletteAlpha,32,8,_col);//rectángulo de arriba (color mezclado)
+        drawSliderRect(gfxRGBsliders,0,0,paletteAlpha,_col);
     }
 
     //obtenemos la coordenada de la paleta (otra vez)
@@ -758,46 +720,40 @@ void updatePal(int increment, int *palettePos)
         }
         if(prevOffset != paletteOffset){//se cambió la paleta, necesita actualizar la pantalla
             drawSurfaceMain(true);
-            drawSurfaceBottom();
         }
     }
-    AVdrawRectangleHollow(pixels,192+(posx<<2),4,64+(posy<<2),4,AVinvertColor(_col));//dibujamos el nuevo contorno
+    oamSetXY(&oamSub, paletteSelOamId,(posx<<2)+191,(posy<<2)+63);
+    oamUpdate(&oamSub);
 }
-
 void updatePalEditBar(int index) {
     int amount = palEdit[index];
-
+    
     // Actualizar barra
     const u16 _barCol[3] = { C_RED, C_GREEN, C_BLUE };
-    AVdrawRectangle(pixels, 192, amount << 1, (index << 3) + 40, 8, _barCol[index]);
-    // Limpiar el área
-    AVdrawRectangle(pixels, 192 + (amount << 1), 64 - (amount << 1), (index << 3) + 40, 8, C_BLACK);
+    int y = (index<<3)+8;
+    drawSliderRect(gfxRGBsliders,0,y,amount<<1,_barCol[index]);
+    drawSliderRect(gfxRGBsliders,amount<<1,y,64-(amount<<1),C_BLACK);
 
     // Actualizar el color
     u16 _col = palEdit[0];
     _col += palEdit[1] << 5;
     _col += palEdit[2] << 10;
-    _col += 32768; // encender bit alpha
+    _col |= 0x8000; // encender bit alpha
     palette[palettePos] = _col;
 
-    AVdrawRectangle(pixels, 192 + ((palettePos & 15) << 2), 4, 64 + ((palettePos >> 4) << 2), 4, _col);
-
+    draw4xRectIn64w(gfxPalette,(palettePos & 15)<<2,(palettePos>>4)<<2,_col);
+    
     if (paletteBpp != 16) {
         drawSurfaceMain(true);
-        drawSurfaceBottom();
-        AVdrawRectangle(pixels, 192, MAX_ALPHA, 32, 8, _col);
+        drawSliderRect(gfxRGBsliders, 0, 0, MAX_ALPHA, _col);
     } else {
         updated = true;
-        AVdrawRectangle(pixels, 192, MAX_ALPHA, 32, 8, _col);
-        AVdrawRectangle(pixels, 192 + paletteAlpha, 64 - paletteAlpha, 32, 8, 0);
+        drawSliderRect(gfxRGBsliders, 0,            0, MAX_ALPHA,             _col);
+        drawSliderRect(gfxRGBsliders, paletteAlpha, 0, 64 - paletteAlpha,    0);
         if (palettePos == 0 && showGrid == true) {
             drawGrid(AVinvertColor(_col));
         }
     }
-
-    // Contorno del color seleccionado
-    _col = AVinvertColor(_col);
-    AVdrawRectangleHollow(pixels, 192 + ((palettePos & 15) << 2), 4, 64 + ((palettePos >> 4) << 2), 4, _col);
 }
 
 //=================================================================Inicialización===================================================================================|
@@ -819,14 +775,11 @@ inline void clearAll(){
         pixelsTopVRAM[i] = 0;
     }
 }
+
 void initBitmap()
 {
     clearAll();
-    for(int i = 0; i < 49152; i++)
-    {
-        pixels[i] = 0;
-        pixelsVRAM[i] = 0;
-    }
+
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 4, true, true);
@@ -837,18 +790,22 @@ void initBitmap()
     videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
     vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
-    bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+    //capas
+    bgCanvas = bgInitSub(3, BgType_Bmp16, BgSize_B16_128x128, 4, 0);
+    bgUI = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
 
-    // Cargar imagen inicial en VRAM
-    decompress(GFXinputBitmap, BG_GFX_SUB, LZ77Vram);
+    pixelsVRAM = (u16*)bgGetGfxPtr(bgCanvas);
 
-    // Transferir pixels a la RAM
-    dmaCopyHalfWords(3,pixelsVRAM,pixels , 49152 * sizeof(u16));
+    decompress(GFXinputBitmap, bgGetGfxPtr(bgUI), LZ77Vram);
+    dmaCopy(GFXinputPal, BG_PALETTE_SUB, GFXinputPalLen);
 
     drawSurfaceMain(true);
     drawSurfaceBottom();
     accurate = true;
 
+    // Prioridades: UI detrás del canvas
+    bgSetPriority(bgCanvas,3); // canvas prioridad mínima
+    bgSetPriority(bgUI,    0);
     bgSetScale(3,256,256);
     bgSetScroll(3, -64, -32);
     bgUpdate();
@@ -861,7 +818,7 @@ void setBrushSettingsSprites(bool on){
     16, 32,//posición
         0,//prioridad
         on,//opaco
-        SpriteSize_32x32, SpriteColorFormat_Bmp,
+        SpriteSize_32x16, SpriteColorFormat_Bmp,
         gfxBrushSettings,
         -1,
     false, false, false, false, false);
@@ -893,10 +850,50 @@ void setEditorSprites(){
     oamClear(&oamMain, 0, 128);
     oamClear(&oamSub, 0, 128);
 
-    u16 *gfx32 = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
+    gfxPalette = oamAllocateGfx(&oamSub,SpriteSize_64x64, SpriteColorFormat_Bmp);
+
+    gfx32 = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
     dmaCopy(GFXselector24Bitmap, gfx32, 32*32*2);
-    u16 *gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
+    gfx16 = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_Bmp);
     dmaCopy(GFXselector16Bitmap, gfx16, 16*16*2);
+    gfx8 = oamAllocateGfx(&oamSub, SpriteSize_8x8, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector8Bitmap, gfx8, 8*8*2);
+    gfx5 = oamAllocateGfx(&oamSub, SpriteSize_8x8, SpriteColorFormat_Bmp);
+    dmaCopy(GFXselector5Bitmap, gfx5, 8*8*2);
+    
+    gfxBrushSettings = oamAllocateGfx(&oamSub, SpriteSize_32x16, SpriteColorFormat_Bmp);
+    dmaCopy(GFXbrushSettingsBitmap, gfxBrushSettings, 32*16*2);
+    gfxRGBsliders = oamAllocateGfx(&oamSub, SpriteSize_64x32, SpriteColorFormat_Bmp);
+    dmaCopy(GFXrgbSlidersBitmap, gfxRGBsliders, 64*32*2);
+    gfxRgbSliderSel = oamAllocateGfx(&oamSub,SpriteSize_8x8, SpriteColorFormat_Bmp);
+    dmaCopy(GFXrgbSliderSelBitmap, gfxRgbSliderSel, 8*8*2);
+
+    oamSet(&oamSub, paletteOamId,
+    192,64,
+    0,//prioridad
+    15,//palette
+    SpriteSize_64x64, SpriteColorFormat_Bmp,
+    gfxPalette,
+    -1,
+    false,false,false,false,false);
+
+    oamSet(&oamSub, rgbSliderOamId,
+    rgbSliderX, rgbSliderY,
+    0,
+    15, // opaco
+    SpriteSize_64x32, SpriteColorFormat_Bmp,
+    gfxRGBsliders,
+    -1,
+    false, false, false, false, false);
+
+    oamSet(&oamSub, rgbSliderSelOamId,
+    SCREEN_W-2, rgbSliderY+8,
+    0,
+    15, // opaco
+    SpriteSize_8x8, SpriteColorFormat_Bmp,
+    gfxRgbSliderSel,
+    -1,
+    false, false, false, false, false);
 
     oamSet(&oamSub, selector24oamID,
     0, 16,
@@ -906,12 +903,15 @@ void setEditorSprites(){
     gfx32,
     -1,
     false, false, false, false, false);
-    
-    gfxBrushSettings = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
-    dmaCopy(GFXbrushSettingsBitmap, gfxBrushSettings, 32*32*2);
 
-    gfx8 = oamAllocateGfx(&oamSub, SpriteSize_8x8, SpriteColorFormat_Bmp);
-    dmaCopy(GFXselector8Bitmap, gfx8, 8*8*2);
+    oamSet(&oamSub, paletteSelOamId,
+    rgbSliderX-1,63,
+    0,
+    15, // opaco
+    SpriteSize_8x8, SpriteColorFormat_Bmp,
+    gfx5,
+    -1,
+    false, false, false, false, false);
 
     setBrushSettingsSprites(true);
 }
@@ -919,37 +919,19 @@ void setEditorSprites(){
 void setOamBG(){
 u16 *gfxBG = oamAllocateGfx(&oamSub, SpriteSize_32x32, SpriteColorFormat_Bmp);
 dmaCopy(GFXbackgroundBitmap, gfxBG, 32*32*2);
+    for(int i = 0; i < 16; i++){
+        int x = ((i & 0b11)<<5)+SURFACE_X;
+        int y = (i & 0b1100)<<3;
 
-for(int i = 0; i < 16; i++){
-    int x = ((i & 0b11)<<5)+SURFACE_X;
-    int y = (i & 0b1100)<<3;
-
-    oamSet(&oamSub, i+4,//index
-    x, y,//posición
-        1,
-        15, // opaco
-        SpriteSize_32x32, SpriteColorFormat_Bmp,
-        gfxBG,
-        -1,
-    false, false, false, false, false);
-}
-//fondo para las paletas
-oamSet(&oamSub, 20,//index
-    192, 32,//posición
-        1,
-        15, // opaco
-        SpriteSize_32x32, SpriteColorFormat_Bmp,
-        gfxBG,
-        -1,
-    false, false, false, false, false);
-oamSet(&oamSub, 21,//index
-    224, 32,//posición
-        1,
-        15, // opaco
-        SpriteSize_32x32, SpriteColorFormat_Bmp,
-        gfxBG,
-        -1,
-    false, false, false, false, false);
+        oamSet(&oamSub, i+4,//index
+        x, y,//posición
+            1,
+            15, // opaco
+            SpriteSize_32x32, SpriteColorFormat_Bmp,
+            gfxBG,
+            -1,
+        false, false, false, false, false);
+    }
 }
 //====================================================================Compatibilidad con modos gráficos====================================|
 void textMode()
@@ -1008,7 +990,8 @@ void bitmapMode()
     videoSetModeSub(MODE_5_2D);             // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
     vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
-    bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 0, 0);
+    bgCanvas = bgInitSub(3, BgType_Bmp16, BgSize_B16_256x256, 4, 0);
+    bgUI = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
 
     setEditorSprites();
     paletteAlpha = MAX_ALPHA;
@@ -1151,7 +1134,7 @@ void nextAnimFrame() {
     loadAnimFrame(surface);
     drawColorPalette();
     updatePal(0,&palettePos);
-    drawSurfaceMain(true); drawSurfaceBottom(); accurate = true;
+    drawSurfaceMain(true);accurate = true;
 }
 
 void deleteAnimFrame() {
@@ -1305,7 +1288,7 @@ int getActionsFromTouch(int button) {
 
         case 3://showGrid
             showGrid = !showGrid;
-            drawSurfaceBottom();
+            //draw grid
         break;
         case 7:
             //screensSwapped = true;
@@ -1352,6 +1335,7 @@ void applyActions(int actions) {//acciones compartidas entre teclas y touch
     if(subSurfaceZoom < minZoom){
             subSurfaceZoom = minZoom;
     }
+    drawSurfaceBottom();
 }
 const char *keyboardLower = "1234567890()#@qwertyuiop[]$^asdfghjkl/{}%!|zxcvbnm>>-_~=<<      ,.'`;+";
 const char *keyboardUpper = "1234567890()#@QWERTYUIOP[]$^ASDFGHJKL/{}%!|ZXCVBNM>>-_~=<<      ,.'`;+";
@@ -1429,7 +1413,6 @@ void swapIndex(u16 oldIndex, u16 newIndex){
     //actualizamos ahora todo visualmente
     if(paletteBpp != 16){
         drawSurfaceMain();
-        drawSurfaceBottom();
     }
     updatePal(0,&palettePos);
     drawColorPalette();
@@ -1894,7 +1877,6 @@ void shiftRightWrap()
 
         stack[row] = last;
     }
-
     pasteFromStackToSurface();
 }
 
@@ -2005,6 +1987,8 @@ int main(void) {
             drawInfo();
             timerReset();
             frameStartTime = timerRead();
+            //verificar si siquiera hay un input en este frame
+            if((kDown|kUp|kHeld) == 0){goto frameEnd;}
             //if(screensSwapped == false){
                 if(kUp & KEY_TOUCH){//permitir volver a dibujar en un pixel
                     prevx = -1;
@@ -2030,8 +2014,8 @@ int main(void) {
                                 palEditSel = 1;
                             }
                             //draw the rectangle with the selected bar.
-                            AVdrawRectangle(pixels,254,2,32,32,C_BLACK);
-                            AVdrawRectangle(pixels,254,2,32+(palEditSel<<3),8,C_YELLOW);
+                            oamSetXY(&oamSub,rgbSliderSelOamId,SCREEN_W-2,(palEditSel<<3)+rgbSliderY);
+                            oamUpdate(&oamSub);
                             updated = true;
                             goto frameEnd;//you can only use one input per frame, nothing more to check here!
                         }
@@ -2054,9 +2038,8 @@ int main(void) {
                                 
                                 paletteAlpha &= MAX_ALPHA;
                                 //el color no cambia, pero la barra sí
-                                AVdrawRectangle(pixels,192,paletteAlpha,32,8,palette[palettePos]);
-                                //Limpiar el area
-                                AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
+                                drawSliderRect(gfxRGBsliders,0,0, MAX_ALPHA,palette[palettePos]);
+                                drawSliderRect(gfxRGBsliders,paletteAlpha,0,64 - paletteAlpha,0);
                             }
                         updated = true;
                         goto frameEnd;
@@ -2087,7 +2070,7 @@ int main(void) {
                 }
                 if(kDown & KEY_R || kDown & KEY_Y){
                     showGrid = !showGrid;
-                    drawSurfaceBottom();
+                    //draw grid
                     goto frameEnd;
                 }
                 //===========================================PALETAS=========================================================
@@ -2115,7 +2098,6 @@ int main(void) {
                                     prevtpx = srcX;
                                     prevtpy = srcY;
                                     drawSurfaceMain(false);
-                                    drawSurfaceBottom();
                                     drew = true;
                                     stylusPressed = true;
                                 }
@@ -2144,7 +2126,7 @@ int main(void) {
                                             animation.pos--;
                                         }
                                         loadAnimFrame(surface);
-                                        drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
+                                        drawSurfaceMain(true);accurate = true;
                                     break;
 
                                     case 3://play animation
@@ -2249,11 +2231,11 @@ int main(void) {
                                     break;
                                     case 2://cut
                                         cutFromSurfaceToStack();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     break;
                                     case 3://Paste
                                         pasteFromStackToSurface();
-                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                        drawSurfaceMain(true);
                                     break;
                                 }
                                 stylusPressed = true;
@@ -2269,53 +2251,53 @@ int main(void) {
                                 {
                                     case 0://rotate -90°
                                         rotateNegative();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 1://rotate 90°
                                         rotatePositive();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 2:
                                         flipV();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 3:
                                         flipH();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 6:
                                         //verificar si es posible escalar
                                         scaleUp();
-                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                        drawSurfaceMain(true);
                                     goto frameEnd;
 
                                     case 7:
                                         scaleDown();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 8:
                                         shiftLeftWrap();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 9:
                                         shiftRightWrap();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 10:
                                         shiftUpWrap();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 11:
                                         shiftDownWrap();
-                                        drawSurfaceMain(false);drawSurfaceBottom();
+                                        drawSurfaceMain(false);
                                     goto frameEnd;
 
                                     case 24: // Page UP
@@ -2328,7 +2310,7 @@ int main(void) {
                                             fileOffset += dir * (paletteBpp << 11);
 
                                             loadFile(imgFormat, currentFilePath, palette, surface);
-                                            drawSurfaceMain(true);drawSurfaceBottom();accurate = true;
+                                            drawSurfaceMain(true);accurate = true;
                                         }
                                     }
                                     goto frameEnd;
@@ -2340,7 +2322,7 @@ int main(void) {
                                             backupIndex = backupMax;
                                         }
                                         backupRead();
-                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                        drawSurfaceMain(true);
                                     goto frameEnd;
                                     
                                     case 27: //redo
@@ -2349,7 +2331,7 @@ int main(void) {
                                             backupIndex = 0;
                                         }
                                         backupRead();
-                                        drawSurfaceMain(true);drawSurfaceBottom();
+                                        drawSurfaceMain(true);
                                     goto frameEnd;
 
                                 }
@@ -2372,9 +2354,8 @@ int main(void) {
                         else if(touch.py < 40 && touch.py > 32 && paletteBpp == 16){//transparencia
                             paletteAlpha = (touch.px-192);
 
-                            AVdrawRectangle(pixels,192,63,32,8,palette[palettePos]);
-                            //Limpiar el area
-                            AVdrawRectangle(pixels,192+paletteAlpha,64-paletteAlpha,32,8,0);
+                            drawSliderRect(gfxRGBsliders,0,0, MAX_ALPHA,palette[palettePos]);
+                            drawSliderRect(gfxRGBsliders,paletteAlpha,0,64 - paletteAlpha,0);
                             updated = true;
                             goto frameEnd;
                         }
@@ -2388,14 +2369,12 @@ int main(void) {
                                 int index = (col<<4)+row;
 
                                 u16 _col = nesPalette[index];
-                                AVdrawRectangle(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
-                                drawSurfaceMain(true);drawSurfaceBottom();
-
                                 palette[palettePos] = _col;
-                                //dibujar el contorno del color seleccionado
-                                _col = AVinvertColor(_col);
-                                AVdrawRectangleHollow(pixels,192+((palettePos & 15)<<2),4, 64+((palettePos>>4)<<2) ,4,_col);
+                                draw4xRectIn64w(gfxPalette,(palettePos & 15)<<2,(palettePos>>4)<<2,_col);
+                                drawSurfaceMain(true);
+                                
                                 goto frameEnd;
+
                             }else{//creador de colores en modo 
                                 int index = (touch.py-40)>>3;
                                 palEdit[index] = (touch.px-192)>>1;
@@ -2457,7 +2436,6 @@ int main(void) {
                 }
                 if (actions != ACTION_NONE) {
                     applyActions(actions);
-                    drawSurfaceBottom();
                 }
                 timerStop();
                 //implementación del modo reposo para ahorrar energía
