@@ -35,4 +35,3 @@ DEFINES         += -DARM9
 # Makefile base BlocksDS
 # -------------------------------------------------
 include $(BLOCKSDS)/sys/default_makefiles/rom_arm9/Makefile
-
