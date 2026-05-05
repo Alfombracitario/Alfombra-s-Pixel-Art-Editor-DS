@@ -86,7 +86,7 @@
 #define paletteOamId 26
 #define paletteSelOamId 25
 #define rgbSliderSelOamId 65
-
+#define gridOamId 0
 #define surfaceSize SURFACE_H *SURFACE_W
 
 #define rgbSliderX SURFACE_X + SURFACE_W
@@ -119,6 +119,7 @@ u16 *gfxRGBsliders;
 u16 *gfxRgbSliderSel;
 u16 *gfxPalette;
 u16 *gfx5;
+u16 *gfxGrid;
 u8 paletteAlpha = MAX_ALPHA; // indicador del alpha actual, útil para 16bpp
 // ideal añadir un array para guardar más frames
 
@@ -614,9 +615,36 @@ void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color)
     }
 }
 
-void drawGrid(u16 color)
-{
-    return;
+void drawGrid(u16 color) {
+    int separation = 1 << (subSurfaceZoom + gridSkips);
+    
+    if(separation < 2 || separation > 64) {
+        dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
+        return;
+    }
+    
+    for(int i = gridOamId; i < gridOamId + 4; i++)
+        oamSetHidden(&oamSub, i, false);
+    
+    int phaseX = (subSurfaceXoffset << subSurfaceZoom) & (separation - 1);
+    int phaseY = (subSurfaceYoffset << subSurfaceZoom) & (separation - 1);
+    
+    dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
+    
+    for(int i = 0; i * separation - phaseX < 64 || i * separation - phaseY < 64; i++) {
+        int x = i * separation - phaseX;
+        int y = i * separation - phaseY;
+        
+        // línea vertical
+        if(x >= 0 && x < 64)
+            for(int j = 0; j < 64; j++)
+                gfxGrid[j * 64 + x] = color;
+        
+        // línea horizontal
+        if(y >= 0 && y < 64)
+            for(int j = 0; j < 64; j++)
+                gfxGrid[y * 64 + j] = color;
+    }
 }
 //=========================================================DRAW SURFACE========================================================================
 __attribute__((aligned(32))) void drawSurfaceMain(bool full = true)
@@ -673,12 +701,6 @@ void drawSurfaceBottom()
                 subSurfaceXoffset - (64 >> subSurfaceZoom), // centrar en x=64..191
                 subSurfaceYoffset);
     bgUpdate();
-
-    if (showGrid)
-    {
-        drawGrid(AVinvertColor(palette[paletteOffset]));
-        accurate = true;
-    }
 }
 //==================== PALETAS ==========|
 // función auxiliar para esta situación específica
@@ -1019,6 +1041,62 @@ void setEditorSprites()
            -1,
            false, false, false, false, false);
 
+    gfxGrid = oamAllocateGfx(&oamSub, SpriteSize_64x64, SpriteColorFormat_Bmp);
+    dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
+    
+    for(int i = gridOamId; i < 4; i++)
+    {
+        oamSetBlendMode(&oamSub, i,SpriteMode_Blended);
+    }
+
+    const int eva = 5;
+    const int evb = 8;
+    const int evy = 10;
+
+    REG_BLDCNT = BLEND_ALPHA
+       | BLEND_SRC_SPRITE
+       | BLEND_DST_BG3
+       | BLEND_DST_BACKDROP;
+
+REG_BLDCNT_SUB    = BLEND_ALPHA | BLEND_SRC_SPRITE | BLEND_DST_BG3 | BLEND_DST_BACKDROP;
+REG_BLDALPHA_SUB  = BLDALPHA_EVA(eva) | BLDALPHA_EVB(evb);
+REG_BLDY_SUB      = BLDY_EVY(evy);
+    #define gridOpacity 8
+    // top-left
+    oamSet(&oamSub, gridOamId,
+        SURFACE_X, 0,
+        0, 8,
+        SpriteSize_64x64, SpriteColorFormat_Bmp,
+        gfxGrid,
+        -1,
+        false, false, false, false, false);
+
+    // top-right
+    oamSet(&oamSub, gridOamId + 1,
+        SURFACE_X + 64, 0,
+        0, 8,
+        SpriteSize_64x64, SpriteColorFormat_Bmp,
+        gfxGrid,
+        -1,
+        false, false, false, false, false);
+
+    // bottom-left
+    oamSet(&oamSub, gridOamId + 2,
+        SURFACE_X, 64,
+        0, 8,
+        SpriteSize_64x64, SpriteColorFormat_Bmp,
+        gfxGrid,
+        -1,
+        false, false, false, false, false);
+
+    // bottom-right
+    oamSet(&oamSub, gridOamId + 3,
+        SURFACE_X + 64, 64,
+        0, 8,
+        SpriteSize_64x64, SpriteColorFormat_Bmp,
+        gfxGrid,
+        -1,
+        false, false, false, false, false);
     setBrushSettingsSprites(true);
 }
 
@@ -1477,34 +1555,23 @@ int getActionsFromTouch(int button)
 
     switch (button)
     {
-    case 1:
-        actions |= ACTION_LEFT;
-        break;
-    case 2:
-        actions |= ACTION_RIGHT;
-        break;
-    case 5:
-        actions |= ACTION_UP;
-        break;
-    case 6:
-        actions |= ACTION_DOWN;
-        break;
-    case 0:
-        actions |= ACTION_ZOOM_IN;
-        break;
-    case 4:
-        actions |= ACTION_ZOOM_OUT;
-        break;
-
-    case 3: // showGrid
+    case 1: actions |= ACTION_LEFT;     break;
+    case 2: actions |= ACTION_RIGHT;    break;
+    case 5: actions |= ACTION_UP;       break;
+    case 6: actions |= ACTION_DOWN;     break;
+    case 0: actions |= ACTION_ZOOM_IN;  break;
+    case 4: actions |= ACTION_ZOOM_OUT; break;
+    case 3:
         showGrid = !showGrid;
-        // draw grid
+        if(showGrid)
+            drawGrid(AVinvertColor(palette[paletteOffset]));
+        else
+            dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
         break;
     case 7:
-        // screensSwapped = true;
-        // lcdSwap();
         break;
     }
+
     return actions;
 }
 
@@ -1574,6 +1641,8 @@ void applyActions(int actions)
         subSurfaceZoom = minZoom;
     }
     drawSurfaceBottom();
+    if(showGrid)
+        drawGrid(AVinvertColor(palette[paletteOffset]));
 }
 void replaceIndex(u16 *surface, u16 oldColor, u16 newColor)
 {
@@ -2364,7 +2433,8 @@ int main(void)
         if (kDown & KEY_R || kDown & KEY_Y)
         {
             showGrid = !showGrid;
-            // draw grid
+            if(showGrid)
+            {drawGrid(AVinvertColor(palette[paletteOffset]));}else{dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);}
             goto frameEnd;
         }
         //===========================================PALETAS=========================================================
