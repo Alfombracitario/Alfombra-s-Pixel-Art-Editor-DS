@@ -39,6 +39,7 @@
 #include "avdslib.h"
 #include "intro.h" //intro global para todos mis juegos
 
+
 #include "GFXinput.h"
 #include "GFXconsoleInput.h"
 #include "GFXselector24.h"
@@ -145,7 +146,7 @@ int bucketMode;
 bool hasClipboard = false;
 bool nesMode = false;
 bool usesPages = false;
-u8 palEdit[3];
+u8 __attribute__((section(".dtcm"))) palEdit[3];
 const u16 nesPalette[64] = {
     0xbdef, 0xd804, 0xdc05, 0xd04c, 0xbc93, 0x9856, 0x80d4, 0x810f,
     0x8169, 0x81a7, 0x81a7, 0xa186, 0xc146, 0x8000, 0x8000, 0x8000,
@@ -173,8 +174,6 @@ int prevy = 0;
 
 int imgFormat = 0;
 
-int sleepTimer = 60;    // frames para que se duerma (baje FPS)
-int sleepingFrames = 1; // solo espera un frame
 int stylusHoldTimer = STYLUSHOLDTIME;
 bool stylusRepeat = false;
 
@@ -186,18 +185,18 @@ int resX = 7;
 int resY = 7;
 
 u8 palEditSel = 1;
-u32 kDown = 0;
-u32 kHeld = 0;
-u32 kUp = 0;
+u32 __attribute__((section(".dtcm"))) kDown = 0;
+u32 __attribute__((section(".dtcm"))) kHeld = 0;
+u32 __attribute__((section(".dtcm"))) kUp = 0;
 
-u32 frameStartTime = 0;
-u32 frameEndTime = 0;
+u32 __attribute__((section(".dtcm"))) frameStartTime = 0;
+u32 __attribute__((section(".dtcm"))) frameEndTime = 0;
 
 bool stylusPressed = false;
 bool showGrid = false;
 bool drew = false;
-bool updated = false;
-bool accurate = false;
+bool __attribute__((section(".dtcm"))) updated = false;
+bool __attribute__((section(".dtcm"))) accurate = false;
 bool mayus = false;
 int holdTimer = 0;
 int fileOffset = 0;
@@ -316,7 +315,7 @@ void submitVRAM(bool _accurate = false)
         while (DMA3_CR & DMA_ENABLE);
     }
 }
-static void vblank_handler(void)
+__attribute__((section(".itcm"))) static void vblank_handler(void)
 {
     // Stop the previous DMA copy
     dmaStopSafe(0);
@@ -559,7 +558,7 @@ inline void brushStamp(int x, int y, u16 color)
     }
 }
 
-void drawLineSurface(int x0, int y0, int x1, int y1, u16 color)
+__attribute__((section(".itcm"))) void drawLineSurface(int x0, int y0, int x1, int y1, u16 color)
 {
     int dx = abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
@@ -587,7 +586,7 @@ void drawLineSurface(int x0, int y0, int x1, int y1, u16 color)
     }
 }
 
-void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color)
+__attribute__((section(".itcm"))) void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color)
 {
     int dx = abs(x1 - x0);
     int sx = x0 < x1 ? 1 : -1;
@@ -647,7 +646,7 @@ void drawGrid(u16 color) {
     }
 }
 //=========================================================DRAW SURFACE========================================================================
-__attribute__((aligned(32))) void drawSurfaceMain(bool full = true)
+__attribute__((section(".itcm"))) void drawSurfaceMain()
 {
     updated = true;
     const int xres = 1 << surfaceXres;
@@ -763,7 +762,6 @@ void drawNesPalette()
             draw4xRectIn64w(gfxRGBsliders, j << 2, (i << 2) + 16, nesPalette[(i << 4) + j]);
         }
     }
-    updated = true;
 }
 inline void drawColorPalette()
 {
@@ -775,7 +773,6 @@ inline void drawColorPalette()
             draw4xRectIn64w(gfxPalette, j << 2, i << 2, palette[(i << 4) + j]);
         }
     }
-    updated = true;
 }
 
 void updatePal(int increment, int *palettePos)
@@ -785,7 +782,6 @@ void updatePal(int increment, int *palettePos)
     {
         return;
     }
-    updated = true;
 
     // obtenemos la coordenada de la paleta
     int posx = *palettePos & 15;
@@ -836,7 +832,7 @@ void updatePal(int increment, int *palettePos)
         }
         if (prevOffset != paletteOffset)
         { // se cambió la paleta, necesita actualizar la pantalla
-            drawSurfaceMain(true);
+            drawSurfaceMain();
         }
     }
     oamSetXY(&oamSub, paletteSelOamId, (posx << 2) + 191, (posy << 2) + 63);
@@ -863,12 +859,11 @@ void updatePalEditBar(int index)
 
     if (paletteBpp != 16)
     {
-        drawSurfaceMain(true);
+        drawSurfaceMain();
         drawSliderRect(gfxRGBsliders, 0, 0, MAX_ALPHA, _col);
     }
     else
     {
-        updated = true;
         drawSliderRect(gfxRGBsliders, 0, 0, MAX_ALPHA, _col);
         drawSliderRect(gfxRGBsliders, paletteAlpha, 0, 64 - paletteAlpha, 0);
         if (palettePos == 0 && showGrid == true)
@@ -925,7 +920,7 @@ void initBitmap()
     decompress(GFXinputBitmap, bgGetGfxPtr(bgUI), LZ77Vram);
     dmaCopy(GFXinputPal, BG_PALETTE_SUB, GFXinputPalLen);
 
-    drawSurfaceMain(true);
+    drawSurfaceMain();
     drawSurfaceBottom();
     accurate = true;
 
@@ -1133,8 +1128,6 @@ void textMode()
     consoleSetFont(&topConsole, &font);
     oamClear(&oamSub, 0, 128);
     oamUpdate(&oamSub);
-    sleepingFrames = 1;
-    sleepTimer = 60;
 }
 int bgPreview;
 void textKeyboardDraw()
@@ -1358,7 +1351,7 @@ void nextAnimFrame()
     loadAnimFrame(surface);
     drawColorPalette();
     updatePal(0, &palettePos);
-    drawSurfaceMain(true);
+    drawSurfaceMain();
     accurate = true;
 }
 
@@ -2323,13 +2316,12 @@ int main(void)
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
     while (1)
     {
+        int actions = ACTION_NONE;
         // input
         scanKeys();
         kDown = keysDown();
         kHeld = keysHeld();
         kUp = keysUp();
-        touchRead(&touch);
-        int actions = ACTION_NONE;
 
         frameEndTime = timerRead();
         drawInfo();
@@ -2340,6 +2332,9 @@ int main(void)
         {
             goto frameEnd;
         }
+        touchRead(&touch);
+        
+
         // if(screensSwapped == false){
         if (kUp & KEY_TOUCH)
         { // permitir volver a dibujar en un pixel
@@ -2348,7 +2343,7 @@ int main(void)
             stylusHoldTimer = STYLUSHOLDTIME;
             stylusRepeat = false;
         }
-        if (kHeld & KEY_L || kHeld & KEY_X) // zoom y offsets
+        if (kHeld & (KEY_L|KEY_X)) // zoom y offsets
         {
             actions |= getActionsFromKeys(kDown);
         }
@@ -2374,7 +2369,6 @@ int main(void)
                     // draw the rectangle with the selected bar.
                     oamSetXY(&oamSub, rgbSliderSelOamId, SCREEN_W - 2, (palEditSel << 3) + rgbSliderY);
                     oamUpdate(&oamSub);
-                    updated = true;
                     goto frameEnd; // you can only use one input per frame, nothing more to check here!
                 }
                 if (kDown & (KEY_RIGHT | KEY_LEFT))
@@ -2402,7 +2396,6 @@ int main(void)
                         drawSliderRect(gfxRGBsliders, 0, 0, MAX_ALPHA, palette[palettePos]);
                         drawSliderRect(gfxRGBsliders, paletteAlpha, 0, 64 - paletteAlpha, 0);
                     }
-                    updated = true;
                     goto frameEnd;
                 }
             }
@@ -2471,7 +2464,7 @@ int main(void)
                             applyTool(srcX, srcY, stylusPressed);
                             prevtpx = srcX;
                             prevtpy = srcY;
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             drew = true;
                             stylusPressed = true;
                         }
@@ -2507,7 +2500,7 @@ int main(void)
                                 animation.pos--;
                             }
                             loadAnimFrame(surface);
-                            drawSurfaceMain(true);
+                            drawSurfaceMain();
                             accurate = true;
                             break;
 
@@ -2625,11 +2618,11 @@ int main(void)
                             break;
                         case 2: // cut
                             cutFromSurfaceToStack();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             break;
                         case 3: // Paste
                             pasteFromStackToSurface();
-                            drawSurfaceMain(true);
+                            drawSurfaceMain();
                             break;
                         }
                         stylusPressed = true;
@@ -2645,53 +2638,53 @@ int main(void)
                         {
                         case 0: // rotate -90°
                             rotateNegative();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 1: // rotate 90°
                             rotatePositive();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 2:
                             flipV();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 3:
                             flipH();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 6:
                             // verificar si es posible escalar
                             scaleUp();
-                            drawSurfaceMain(true);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 7:
                             scaleDown();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 8:
                             shiftLeftWrap();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 9:
                             shiftRightWrap();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 10:
                             shiftUpWrap();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 11:
                             shiftDownWrap();
-                            drawSurfaceMain(false);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 24: // Page UP
@@ -2705,7 +2698,7 @@ int main(void)
                                 fileOffset += dir * (paletteBpp << 11);
 
                                 loadFile(imgFormat, currentFilePath, palette, surface);
-                                drawSurfaceMain(true);
+                                drawSurfaceMain();
                                 accurate = true;
                             }
                         }
@@ -2718,7 +2711,7 @@ int main(void)
                                 backupIndex = backupMax;
                             }
                             backupRead();
-                            drawSurfaceMain(true);
+                            drawSurfaceMain();
                             goto frameEnd;
 
                         case 27: // redo
@@ -2728,7 +2721,7 @@ int main(void)
                                 backupIndex = 0;
                             }
                             backupRead();
-                            drawSurfaceMain(true);
+                            drawSurfaceMain();
                             goto frameEnd;
                         }
                     }
@@ -2755,13 +2748,12 @@ int main(void)
 
                     drawSliderRect(gfxRGBsliders, 0, 0, MAX_ALPHA, palette[palettePos]);
                     drawSliderRect(gfxRGBsliders, paletteAlpha, 0, 64 - paletteAlpha, 0);
-                    updated = true;
                     goto frameEnd;
                 }
                 else if (touch.py >= 40 && touch.py < 64) // creador de colores
                 {
                     // hay mucho código hardcodeado aquí para mejorar el rendimiento :>
-                    if (nesMode)
+                    if(nesMode)
                     {
                         int ystart = 48;
                         int row = (touch.px - 192) >> 2;
@@ -2771,7 +2763,7 @@ int main(void)
                         u16 _col = nesPalette[index];
                         palette[palettePos] = _col;
                         draw4xRectIn64w(gfxPalette, (palettePos & 15) << 2, (palettePos >> 4) << 2, _col);
-                        drawSurfaceMain(true);
+                        drawSurfaceMain();
 
                         goto frameEnd;
                     }
@@ -2810,7 +2802,6 @@ int main(void)
                     }
                     drawColorPalette();
                     updatePal(0, &palettePos);
-                    updated = true;
                     goto frameEnd;
                 }
                 else
@@ -2845,24 +2836,12 @@ int main(void)
             applyActions(actions);
         }
         timerStop();
-        // implementación del modo reposo para ahorrar energía
-        for (int i = 0; i < sleepingFrames; i++)
-        {
-            swiWaitForVBlank();
-        }
+        swiWaitForVBlank();//ya no hay modo reposo ya que si no hay input no se hace nada.
         timerContinue();
-        if (sleepTimer < 0 && sleepingFrames < 4)
-        {
-            sleepingFrames++;
-            sleepTimer = (60 * (sleepingFrames << 2)); // cada vez le toma más frames dormirse
-        }
         if (updated)
         { // llamar a submitVRAM solo si se modificó algo visual
             submitVRAM(accurate);
-            sleepTimer = 60;
-            sleepingFrames = 1;
         }
-        sleepTimer--;
         updated = false;
         accurate = false;
         // fin del loop de modo bitmap (pantalla de abajo)

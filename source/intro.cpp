@@ -304,4 +304,11 @@ void intro() {
     irqSet(IRQ_VBLANK, NULL);
     soundDisable();
     BG_PALETTE[0] = 0;
+    vramSetBankA(VRAM_A_LCD);
+    vramSetBankB(VRAM_B_LCD);
+    memset(VRAM_A, 0, 128 * 1024);
+    memset(VRAM_B, 0, 128 * 1024);
+    memset(BG_PALETTE,     0, 512);
+    memset(SPRITE_PALETTE, 0, 512);
+    memset(BG_PALETTE_SUB, 0, 512);
 }

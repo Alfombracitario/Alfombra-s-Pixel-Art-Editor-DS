@@ -38,7 +38,7 @@ void clearAll();
 void clearTop();
 void drawColorPalette();
 void drawNesPalette();
-void drawSurfaceMain(bool full);
+void drawSurfaceMain();
 void drawSurfaceBottom();
 void setBackupVariables();
 

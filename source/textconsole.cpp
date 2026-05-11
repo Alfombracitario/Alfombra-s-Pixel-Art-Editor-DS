@@ -183,7 +183,7 @@ static bool handleFileConsole()
                 imgFormat = selectorA;
                 loadFile(imgFormat, currentFilePath, palette, surface);
             }
-            drawSurfaceMain(true);
+            drawSurfaceMain();
             drawSurfaceBottom();
             drawColorPalette();
             setBackupVariables();

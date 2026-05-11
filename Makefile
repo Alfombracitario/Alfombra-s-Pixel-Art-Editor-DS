@@ -3,11 +3,11 @@
 # -------------------------------------------------
 BLOCKSDS ?= /opt/blocksds/core
 
-#--------------------------------------------------
+# -------------------------------------------------
 # Librerías
-#--------------------------------------------------
-LIBS		:= -lnds9 -lmm9
-LIBDIRS		:= $(BLOCKSDS)/libs/maxmod
+# -------------------------------------------------
+LIBS        := -lnds9 -lmm9
+LIBDIRS     := $(BLOCKSDS)/libs/maxmod
 
 # -------------------------------------------------
 # Información del ROM
@@ -15,6 +15,8 @@ LIBDIRS		:= $(BLOCKSDS)/libs/maxmod
 NAME            := A-Pix
 GAME_TITLE      := A-Pix DS
 GAME_SUBTITLE   := @Alfombracitario
+GAME_AUTHOR     := Pre release 0.4
+GAME_ICON       := icon.bmp
 
 # -------------------------------------------------
 # Carpetas del proyecto
@@ -25,7 +27,7 @@ GFXDIRS         := graphics
 AUDIODIRS       := audio
 
 # -------------------------------------------------
-# Opciones extra 
+# Opciones extra
 # -------------------------------------------------
 CFLAGS          += -O3 -Wall
 CXXFLAGS        += -O3 -Wall
