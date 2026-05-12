@@ -195,6 +195,7 @@ static bool handleFileConsole()
     // Navegación con hold
     if (holdTimer > 10)
     {
+        swiWaitForVBlank();
         if (kHeld & KEY_RIGHT) { selectorA++; redraw = true; consoleClear(); }
         if (kHeld & KEY_LEFT)  { selectorA--; redraw = true; consoleClear(); }
         if (kHeld & KEY_UP   && selector > 0)             { selector--; redraw = true; consoleClear(); }
@@ -277,7 +278,7 @@ bool runTextConsole()
         kHeld = keysHeld();
         kUp   = keysUp();
         touchRead(&touch);
-        holdTimer = kDown ? holdTimer + 1 : 0;
+        holdTimer = kHeld ? holdTimer + 1 : 0;
 
         if (kDown & KEY_SELECT)
         {

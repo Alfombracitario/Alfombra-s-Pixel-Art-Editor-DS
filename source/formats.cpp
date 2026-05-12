@@ -80,7 +80,7 @@ int importNES(const char* path, u16* surface) {
     int dataSize = 0;
     FILE* f = openFileOffset(path,&dataSize);
     if(f == NULL){return -1;}
-
+    paletteBpp = 2;
     // Leer datos
     u8* chrData = (u8*)backup;
     fread(chrData, 1, dataSize, f);
@@ -167,7 +167,7 @@ int importGBC(const char* path, u16* surface) {
     int dataSize = 0;
     FILE* f = openFileOffset(path,&dataSize);
     if(f == NULL){return -1;}
-
+    paletteBpp = 2;
     // Leer todo a backup (temporal)
     int size = fread(backup, 1, sizeof(backup), f);
     fclose(f);
@@ -237,7 +237,7 @@ int importSNES(const char* path, u16* surface) {
     int dataSize = 0;
     FILE* f = openFileOffset(path,&dataSize);
     if(f == NULL){return -1;}
-
+    paletteBpp = 4;
     // número de tiles (32 bytes por tile)
     long numTiles = dataSize>>5;
     if (numTiles <= 0) { fclose(f); return -1; }
@@ -346,7 +346,7 @@ int importGBA(const char* path, u16* surface) {
     int dataSize = 0;
     FILE* f = openFileOffset(path,&dataSize);
     if(f == NULL){return -1;}
-
+    paletteBpp = 4;
     // Leer todo el archivo a backup (temporal)
     int size = fread(backup, 1, sizeof(backup), f);
     fclose(f);
@@ -781,6 +781,7 @@ int loadBMP_direct(const char* filename, uint16_t* surface) {
     // Verificar firma y tipo de BMP soportado
     if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
     if(infoHeader.biBitCount != 16 && infoHeader.biBitCount != 24) { fclose(in); return 0; }
+    paletteBpp = 16;
 
     int width  = infoHeader.biWidth;
     int height = infoHeader.biHeight;
@@ -919,7 +920,7 @@ int loadBMP_indexed(const char* filename, uint16_t* pal, uint16_t* surface) {
 
     if(fileHeader.bfType != 0x4D42) { fclose(in); return 0; }
     if(infoHeader.biBitCount != 8)  { fclose(in); return 0; } // solo 8bpp soportado
-
+    paletteBpp = 8;
     int width  = infoHeader.biWidth;
     int height = infoHeader.biHeight;
     int numColors = infoHeader.biClrUsed ? infoHeader.biClrUsed : 256;
@@ -972,7 +973,7 @@ int loadBMP_indexed(const char* filename, uint16_t* pal, uint16_t* surface) {
 void saveBMP_4bpp(const char* filename, uint16_t* pal, uint16_t* surface) {
     FILE* out = fopen(filename, "wb");
     if (!out) return;
-
+    paletteBpp = 4;
     int width  = 1 << surfaceXres;
     int height = 1 << surfaceYres;
     int numColors = 16;
@@ -1119,7 +1120,7 @@ int importSNES8bpp(const char* path, u16* surface) {
     int dataSize = 0;
     FILE* f = openFileOffset(path, &dataSize);
     if (!f) return -1;
-
+    paletteBpp = 8;
     // 64 bytes por tile
     long numTiles = dataSize >> 6;
     if (numTiles <= 0) { fclose(f); return -1; }

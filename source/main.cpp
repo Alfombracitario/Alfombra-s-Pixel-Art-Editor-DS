@@ -1195,27 +1195,23 @@ void bitmapMode()
 char bucketText[2][6] = {"Color", "Index"};
 void drawInfo()
 {
+    consoleClear();
+
+    if (animation.frames != 0)
+        printf("frame: %d / %d \nanim speed: %d", animation.pos, animation.frames, animation.speed);
+    else
+        printf("\n\n");
+
+    if (bucketMode != 0)
+        printf("\nBucket: replace %s", bucketText[bucketMode - 1]);
+    else
+        printf("\n");
+
+#ifdef DEBUG_CPU
     u32 ticks = frameEndTime - frameStartTime;
     u32 cpuUsage = ((u64)(ticks) * 11732) >> 16;
-    consoleClear();
-    if (animation.frames != 0)
-    {
-        printf("frame: %d / %d \nanim speed: %d", animation.pos, animation.frames, animation.speed);
-    }
-    else
-    {
-        printf("\n\n");
-    }
-    if (bucketMode != 0)
-    {
-        printf("\nBucket: replace %s", bucketText[bucketMode - 1]);
-    }
-    else
-    {
-        printf("\n");
-    }
-    printf("\n%d", fps);
-    printf("\n%lu", cpuUsage);
+    printf("\n%d\n%lu", fps, cpuUsage);
+#endif
 }
 //====================================================================Backups==============================================================|
 void setBackupVariables()
