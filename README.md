@@ -52,9 +52,6 @@ Designed and tested to run on **original Nintendo DS hardware**. Emulator compat
 | Button | Action |
 |--------|--------|
 | **SELECT** + D-Pad | Edit palette color with per-channel precision |
-
-> The full control reference (brush settings, shift buttons, retro format scrolling, etc.) is documented in the included project files.
-
 ---
 
 ## Supported Formats
