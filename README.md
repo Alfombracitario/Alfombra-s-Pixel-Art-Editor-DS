@@ -1,5 +1,7 @@
 <img width="1485" height="384" alt="banner" src="https://github.com/user-attachments/assets/0de200cb-ea3a-4f0a-9268-c7748b70b55e" />
 
+# A-Pix DS
+
 A pixel art editor developed specifically for the **Nintendo DS**, inspired by YY-CHR.  
 Designed and tested to run on **original Nintendo DS hardware**. Emulator compatibility is **not guaranteed**, and emulator-specific issues are not a priority for this project.
 
