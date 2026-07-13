@@ -714,7 +714,7 @@ void drawSurfaceBottom()
     
     // --- Limitar el zoom ---
     int maxRes = MAX(surfaceXres, surfaceYres);
-    printf("zoom %d",subSurfaceZoom);
+    
     int minZoom = 7 - maxRes;
     int maxZoom = 6;
     if (subSurfaceZoom < minZoom)
@@ -2149,7 +2149,6 @@ void rotateNegative()
         }
     }
 }
-
 void shiftDownWrap()
 {
     copyFromSurfaceToStack();
@@ -2157,23 +2156,20 @@ void shiftDownWrap()
     int width = 1 << stackXres;
     int height = 1 << stackYres;
 
-    // Guardar última fila en la primera
-    memcpy(
-        stack,
-        stack + ((height - 1) << stackXres),
-        width * sizeof(u16));
+    u16 temp[128];
+    memcpy(temp, stack + ((height - 1) << stackXres), width * sizeof(u16));
 
-    // Mover filas hacia abajo
+    // Mover filas hacia abajo (esto NO toca la fila 0 todavía)
     for (int y = height - 1; y > 0; y--)
     {
         int current = y << stackXres;
         int prev = (y - 1) << stackXres;
 
-        memcpy(
-            stack + current,
-            stack + prev,
-            width * sizeof(u16));
+        memcpy(stack + current, stack + prev, width * sizeof(u16));
     }
+
+    // Recién ahora coloco la última fila guardada en la primera
+    memcpy(stack, temp, width * sizeof(u16));
 
     pasteFromStackToSurface();
 }
@@ -2185,23 +2181,20 @@ void shiftUpWrap()
     int width = 1 << stackXres;
     int height = 1 << stackYres;
 
-    // Guardar primera fila en la última
-    memcpy(
-        stack + ((height - 1) << stackXres),
-        stack,
-        width * sizeof(u16));
+    u16 temp[128];
+    memcpy(temp, stack, width * sizeof(u16));
 
-    // Mover filas hacia arriba
+    // Mover filas hacia arriba (esto NO toca la última fila todavía)
     for (int y = 0; y < height - 1; y++)
     {
         int current = y << stackXres;
         int next = (y + 1) << stackXres;
 
-        memcpy(
-            stack + current,
-            stack + next,
-            width * sizeof(u16));
+        memcpy(stack + current, stack + next, width * sizeof(u16));
     }
+
+    // Recién ahora coloco la primera fila guardada en la última
+    memcpy(stack + ((height - 1) << stackXres), temp, width * sizeof(u16));
 
     pasteFromStackToSurface();
 }

@@ -15,7 +15,7 @@ LIBDIRS     := $(BLOCKSDS)/libs/maxmod
 NAME            := A-Pix
 GAME_TITLE      := A-Pix DS
 GAME_SUBTITLE   := @Alfombracitario
-GAME_AUTHOR     := Pre release 0.4
+GAME_AUTHOR     := Pre release 0.4.1
 GAME_ICON       := icon.bmp
 
 # -------------------------------------------------
