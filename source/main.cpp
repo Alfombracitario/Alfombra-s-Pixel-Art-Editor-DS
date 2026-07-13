@@ -307,6 +307,8 @@ void submitVRAM(bool _accurate = false)
     }
     else
     {
+        if (_accurate)
+            DC_FlushRange(pixelsTop, sizeTop);
         // 16bpp: main ya está en VRAM, sub lee desde ahí
         DMA3_CR = 0;
         DMA3_SRC  = (u32)pixelsTopVRAM;
@@ -692,9 +694,48 @@ __attribute__((section(".itcm"))) void drawSurfaceMain()
     }
 }
 void drawSurfaceBottom()
-{ // esta función ya ni debería existir.
-    s16 scale = 256 >> subSurfaceZoom;
+{ // esta funcion ahora se encarga de limitar y actualizar ciertos datos.
+    int visibleX = 128 >> subSurfaceZoom;
+    int visibleY = 128 >> subSurfaceZoom;
 
+    int maxX = (1 << surfaceXres) - visibleX;
+    int maxY = (1 << surfaceYres) - visibleY;
+
+    if (maxX < 0) maxX = 0;
+    if (maxY < 0) maxY = 0;
+    if (subSurfaceXoffset < 0)
+        subSurfaceXoffset = 0;
+    if (subSurfaceYoffset < 0)
+        subSurfaceYoffset = 0;
+    if (subSurfaceXoffset > maxX)
+        subSurfaceXoffset = maxX;
+    if (subSurfaceYoffset > maxY)
+        subSurfaceYoffset = maxY;
+    
+    // --- Limitar el zoom ---
+    int maxRes = MAX(surfaceXres, surfaceYres);
+    printf("zoom %d",subSurfaceZoom);
+    int minZoom = 7 - maxRes;
+    int maxZoom = 6;
+    if (subSurfaceZoom < minZoom)
+    {
+        subSurfaceZoom = minZoom;
+    }
+    if (subSurfaceZoom > maxZoom){
+        subSurfaceZoom = maxZoom;
+    }
+
+    s16 scale = 256 >> subSurfaceZoom;
+    //un lut para los zooms
+    s16 zoomLut[8];
+    s16 oamScale = 1<<(subSurfaceZoom+4);
+    if(oamScale > 256){
+        oamScale = 256;
+    }
+
+    
+    oamRotateScale(&oamSub, 1, 0,oamScale,oamScale);
+    oamUpdate(&oamSub);
     bgSetScale(bgCanvas, scale, scale);
     bgSetScroll(bgCanvas,
                 subSurfaceXoffset - (64 >> subSurfaceZoom), // centrar en x=64..191
@@ -1036,6 +1077,8 @@ void setEditorSprites()
            -1,
            false, false, false, false, false);
 
+    palettePos = 0;
+    paletteOffset = 0;
     gfxGrid = oamAllocateGfx(&oamSub, SpriteSize_64x64, SpriteColorFormat_Bmp);
     dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
     
@@ -1110,7 +1153,7 @@ void setOamBG()
                15, // opaco
                SpriteSize_32x32, SpriteColorFormat_Bmp,
                gfxBG,
-               -1,
+               1,
                false, false, false, false, false);
     }
 }
@@ -1294,12 +1337,6 @@ bool loadArray(const char *path, void *array, size_t size)
 }
 // ===================================================== ANIMATION ========================================== |
 #define PALETTE_SIZE (256 * 2) // 512 bytes, fijo siempre
-
-// Tamaño total de un bloque en disco (píxeles + paleta)
-static inline int blockSize()
-{
-    return (2 << surfaceXres << surfaceYres) + PALETTE_SIZE;
-}
 
 void loadAnimFrame(u16 *surface)
 {
@@ -1609,25 +1646,6 @@ void applyActions(int actions)
         {
             subSurfaceZoom--;
         }
-    }
-    // --- Limitar dentro de la superficie ---
-    blockSize = (1 << surfaceXres) >> subSurfaceZoom;
-    int maxX = (1 << surfaceXres) - blockSize; // límite máximo en X
-    int maxY = (1 << surfaceYres) - blockSize; // límite máximo en Y
-    if (subSurfaceXoffset < 0)
-        subSurfaceXoffset = 0;
-    if (subSurfaceYoffset < 0)
-        subSurfaceYoffset = 0;
-    if (subSurfaceXoffset > maxX)
-        subSurfaceXoffset = maxX;
-    if (subSurfaceYoffset > maxY)
-        subSurfaceYoffset = maxY;
-    // --- Limitar el zoom ---
-    int maxRes = MAX(surfaceXres, surfaceYres);
-    int minZoom = 7 - maxRes;
-    if (subSurfaceZoom < minZoom)
-    {
-        subSurfaceZoom = minZoom;
     }
     drawSurfaceBottom();
     if(showGrid)
