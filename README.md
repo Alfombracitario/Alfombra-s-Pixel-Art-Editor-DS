@@ -1,4 +1,9 @@
 <img width="1485" height="384" alt="banner" src="https://github.com/user-attachments/assets/0de200cb-ea3a-4f0a-9268-c7748b70b55e" />
+# A-Pix DS
+
+[![Awesome BlocksDS](https://cdn.rawgit.com/sindresorhus/awesome/d7305f38d29fed78fa85652e3a63e154dd8e8829/media/badge.svg)](https://github.com/blocksds/awesome-blocksds)
+[![GitHub release](https://img.shields.io/github/v/release/Alfombracitario/A-PIX_DS?include_prereleases)](https://github.com/Alfombracitario/A-PIX_DS/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Alfombracitario/A-PIX_DS)](https://github.com/Alfombracitario/A-PIX_DS/stargazers)
 
 # A-Pix DS
 
