@@ -124,6 +124,7 @@ Each frame must currently be exported individually — `.gif` export is not yet 
 
 - **Doclic**  
 - **Pseudo**  
+- **Mowrious**
 - **PypeBros**
 
 Your suggestions is what makes this app beter!
