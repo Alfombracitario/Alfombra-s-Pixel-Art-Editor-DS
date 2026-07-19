@@ -4,6 +4,27 @@
 [![GitHub release](https://img.shields.io/github/v/release/Alfombracitario/A-PIX_DS?include_prereleases)](https://github.com/Alfombracitario/A-PIX_DS/releases)
 [![GitHub stars](https://img.shields.io/github/stars/Alfombracitario/A-PIX_DS)](https://github.com/Alfombracitario/A-PIX_DS/stargazers)
 
+[
+
+![Built with BlocksDS](https://img.shields.io/badge/Built%20with-BlocksDS-blue?style=flat-square)
+
+](https://github.com/blocksds/sdk)
+[
+
+![Platform](https://img.shields.io/badge/platform-Nintendo%20DS-red?style=flat-square)
+
+](#)
+[
+
+![Downloads](https://img.shields.io/github/downloads/Alfombracitario/A-PIX_DS/total?style=flat-square)
+
+](https://github.com/Alfombracitario/A-PIX_DS/releases)
+[
+
+![Discord](https://img.shields.io/discord/DISCORD_SERVER_ID?label=discord&style=flat-square)
+
+](https://discord.gg/smJcPKfBBW)
+
 # A-Pix DS
 
 A pixel art editor developed specifically for the **Nintendo DS**, inspired by YY-CHR.  
