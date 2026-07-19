@@ -12,10 +12,11 @@ if (-not (Test-Path $MAP)) {
 $elfAvailable = (Test-Path $ELF) -and (Test-Path $OBJDUMP)
 
 # Leer todas las lineas con direccion + simbolo
+$mapLines = Get-Content $MAP
 $symbols = @()
 $currentSection = ""
 
-foreach ($line in Get-Content $MAP) {
+foreach ($line in $mapLines) {
     if ($line -match '^\s*(\.\S+)\s+0x[0-9a-fA-F]+') {
         $currentSection = $Matches[1]
     }
@@ -73,9 +74,77 @@ function Get-Padding($sym, $totalSize) {
     }
 }
 
+function Get-MemoryRegions($mapLines) {
+    # Tamanios fijos de hardware del ARM9 en NDS/DSi
+    $ITCM_SIZE = 32KB
+    $DTCM_SIZE = 16KB
+    $RAM_SIZE  = 4MB   # asume modo NTR (4MB). Si el build usa RAM extendida de DSi, este total no aplica.
+
+    $regions = [ordered]@{
+        "ITCM"       = @{ Total = $ITCM_SIZE; Used = 0; Sections = @{} }
+        "DTCM"       = @{ Total = $DTCM_SIZE; Used = 0; Sections = @{} }
+        "RAM (main)" = @{ Total = $RAM_SIZE;  Used = 0; Sections = @{} }
+    }
+
+    $itcmSections = @('.itcm', '.vectors')
+    $dtcmSections = @('.dtcm', '.sbss')
+    $skipSections = @('.secure', '.comment', '.ARM.attributes', '.symtab', '.strtab', '.shstrtab')
+
+    foreach ($line in $mapLines) {
+        # Solo lineas de "seccion total" (sin indentacion), no las contribuciones de cada .o
+        if ($line -match '^(\.[A-Za-z0-9_.]+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)') {
+            $secName = $Matches[1]
+            $secSize = [Convert]::ToUInt64($Matches[3], 16)
+
+            if ($secSize -eq 0) { continue }
+            if ($secName -match '^\.debug_' -or ($skipSections -contains $secName)) { continue }
+
+            if ($itcmSections -contains $secName) {
+                $regions["ITCM"].Used += $secSize
+                $regions["ITCM"].Sections[$secName] = $secSize
+            } elseif ($dtcmSections -contains $secName) {
+                $regions["DTCM"].Used += $secSize
+                $regions["DTCM"].Sections[$secName] = $secSize
+            } else {
+                $regions["RAM (main)"].Used += $secSize
+                $regions["RAM (main)"].Sections[$secName] = $secSize
+            }
+        }
+    }
+
+    return $regions
+}
+
+function Show-MemoryUsage($regions) {
+    Write-Host "  === Uso de memoria por region (ARM9) ===" -ForegroundColor Cyan
+    foreach ($key in $regions.Keys) {
+        $r = $regions[$key]
+        $usedKB  = [math]::Round($r.Used / 1KB, 2)
+        $totalKB = [math]::Round($r.Total / 1KB, 2)
+        $pct     = if ($r.Total -gt 0) { [math]::Round(($r.Used / $r.Total) * 100, 1) } else { 0 }
+
+        $color = if ($pct -ge 90) { "Red" } elseif ($pct -ge 70) { "Yellow" } else { "Green" }
+        Write-Host ("    {0,-11}: {1,9} KB / {2,-9} KB  ({3}%)" -f $key, $usedKB, $totalKB, $pct) -ForegroundColor $color
+
+        foreach ($sec in $r.Sections.Keys) {
+            $secKB = [math]::Round($r.Sections[$sec] / 1KB, 2)
+            Write-Host ("        $sec : $secKB KB") -ForegroundColor DarkGray
+        }
+    }
+    Write-Host "  (RAM (main) asume 4MB, modo NTR. Escribe 'mem' para volver a ver esta tabla.)" -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+Show-MemoryUsage (Get-MemoryRegions $mapLines)
+
 while ($true) {
     $query = Read-Host "Function"
     if ($query -eq "") { break }
+
+    if ($query -eq "mem") {
+        Show-MemoryUsage (Get-MemoryRegions $mapLines)
+        continue
+    }
 
     $matches_ = $sorted | Where-Object { $_.Name -like "*$query*" }
 

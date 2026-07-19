@@ -3,8 +3,9 @@
 
 #include <nds.h>
 #include <time.h>
+#include "timers.h"
 
-//#define DEBUG_CPU
+#define DEBUG_CPU
 
 #ifdef DEBUG_CPU
 extern u32 timerAccum;

@@ -21,7 +21,6 @@
 
     Añadir settings
         invertir colores
-        index swap (colores)
         cambiar hue global
         reducir colores (posterización)
 */
@@ -38,7 +37,7 @@
 #include "files.h"
 #include "avdslib.h"
 #include "intro.h" //intro global para todos mis juegos
-
+#include "animation.h"
 
 #include "GFXinput.h"
 #include "GFXconsoleInput.h"
@@ -58,8 +57,6 @@
 #define SCREEN_H 192
 #define SURFACE_X 64
 #define SURFACE_Y 0
-#define SURFACE_W 128
-#define SURFACE_H 128
 
 #define C_WHITE 65535
 #define C_RED 32799
@@ -87,21 +84,17 @@
 #define paletteOamId 26
 #define paletteSelOamId 25
 #define rgbSliderSelOamId 65
+#define selectedZoneOamId 100
 #define gridOamId 0
-#define surfaceSize SURFACE_H *SURFACE_W
 
 #define rgbSliderX SURFACE_X + SURFACE_W
 #define rgbSliderY 32
 
-#define APP_PATH "/_nds/apixds/"
-#define CACHE_PATH APP_PATH "cache/"
-#define ANIM_TEMP CACHE_PATH "animation.temp"
-#define ANIM_TEMP_NEW CACHE_PATH "animation_new.temp"
 //===================================================================Variables================================================================
 static PrintConsole topConsole;
 // static PrintConsole bottomConsole;
 
-u16 surface[surfaceSize]; // ya no tiene un espacio extra en RAM dado que su acceso es super lineal y predecible, además de que es muy grande
+u16 surface[surfaceSize];//lienzo principal, si pudiera lo metería a dtcm
 u16 *pixelsTopVRAM = (u16 *)BG_GFX;
 u16 *pixelsVRAM = (u16 *)BG_GFX_SUB;
 u16 *bgPreviewGfx = NULL;
@@ -109,7 +102,7 @@ u16 pixelsTop[surfaceSize];                         // copia en RAM (es más rá
 u16 __attribute__((section(".dtcm"))) palette[256]; // ram rápida sin cache miss, perfecto para acceso aleatorio de paletas
 
 u16 stack[surfaceSize]; // para operaciones temporales
-u16 backup[131072];     // para undo/redo y cargar imagenes 256kb
+u16 backup[128*128*8];     // para undo/redo y cargar imagenes 256kb
 
 u16 gradientTable[SCREEN_H];
 
@@ -121,6 +114,7 @@ u16 *gfxRgbSliderSel;
 u16 *gfxPalette;
 u16 *gfx5;
 u16 *gfxGrid;
+u16 *gfxSelectedZone;
 u8 paletteAlpha = MAX_ALPHA; // indicador del alpha actual, útil para 16bpp
 // ideal añadir un array para guardar más frames
 
@@ -147,6 +141,7 @@ bool hasClipboard = false;
 bool nesMode = false;
 bool usesPages = false;
 u8 __attribute__((section(".dtcm"))) palEdit[3];
+
 const u16 nesPalette[64] = {
     0xbdef, 0xd804, 0xdc05, 0xd04c, 0xbc93, 0x9856, 0x80d4, 0x810f,
     0x8169, 0x81a7, 0x81a7, 0xa186, 0xc146, 0x8000, 0x8000, 0x8000,
@@ -168,6 +163,10 @@ int __attribute__((section(".dtcm"))) surfaceYres = 7;
 int __attribute__((section(".dtcm"))) subSurfaceXoffset = 0;
 int __attribute__((section(".dtcm"))) subSurfaceYoffset = 0;
 int __attribute__((section(".dtcm"))) subSurfaceZoom = 3; // 8 veces más cerca
+
+int previewXoffset = 0;
+int previewYoffset = 0;
+int previewPosAlpha = 15;
 
 int prevx = 0;
 int prevy = 0;
@@ -201,6 +200,7 @@ bool mayus = false;
 int holdTimer = 0;
 int fileOffset = 0;
 int gridSkips = 0;
+int prevZoom = subSurfaceZoom;
 bool rPressed = false;
 bool screensSwapped = false;
 bool showBrushSettings = false;
@@ -211,16 +211,6 @@ bool redraw = true;
 subMode currentSubMode = SUB_BITMAP;
 
 consoleMode currentConsoleMode = MODE_NO;
-
-// animación
-struct Animation
-{
-    u16 frames : 15 = 0;
-    u16 isPlaying : 1 = 0;
-    u16 pos = 0;
-    u8 speed = 2; // en frames
-};
-Animation animation;
 
 enum
 {
@@ -280,8 +270,6 @@ ConsoleFont font = {
 };
 
 // FUNCIONES
-// función para pasar copiar datos rápidamente
-extern "C" void memcpy_fast_arm9(const void *src, void *dst, unsigned int bytes);
 
 void submitVRAM(bool _accurate = false)
 {
@@ -590,10 +578,10 @@ __attribute__((section(".itcm"))) void drawLineSurface(int x0, int y0, int x1, i
 
 __attribute__((section(".itcm"))) void drawLineSurfaceAlpha(int x0, int y0, int x1, int y1, u16 color)
 {
-    int dx = abs(x1 - x0);
-    int sx = x0 < x1 ? 1 : -1;
-    int dy = -abs(y1 - y0);
-    int sy = y0 < y1 ? 1 : -1;
+    const int dx = abs(x1 - x0);
+    const int sx = x0 < x1 ? 1 : -1;
+    const int dy = -abs(y1 - y0);
+    const int sy = y0 < y1 ? 1 : -1;
     int err = dx + dy;
 
     while (1)
@@ -616,35 +604,75 @@ __attribute__((section(".itcm"))) void drawLineSurfaceAlpha(int x0, int y0, int 
     }
 }
 
-void drawGrid(u16 color) {
+__attribute__((section(".itcm"))) void drawGrid(u16 color) {
     int separation = 1 << (subSurfaceZoom + gridSkips);
-    
-    if(separation < 2 || separation > 64) {
-        dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
+
+    dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
+
+    if (separation < 2 || separation > 64)
         return;
-    }
-    
-    for(int i = gridOamId; i < gridOamId + 4; i++)
+
+    for (int i = gridOamId; i < gridOamId + 4; i++)
         oamSetHidden(&oamSub, i, false);
-    
+
     int phaseX = (subSurfaceXoffset << subSurfaceZoom) & (separation - 1);
     int phaseY = (subSurfaceYoffset << subSurfaceZoom) & (separation - 1);
+
+    // líneas verticales
+    for (int x = -phaseX; x < 64; x += separation) {
+        if (x >= 0) {
+            u16* p = gfxGrid + x;
+            for (int j = 0; j < 64; j++, p += 64)
+                *p = color;
+        }
+    }
+
+    // líneas horizontales
+    for (int y = -phaseY; y < 64; y += separation) {
+        if (y >= 0)
+            dmaFillHalfWords(color, gfxGrid + y * 64, 64 * 2);
+    }
+}
+
+void updatePreviewPos(){
+    //este sprite mide 64x64
+    //obtenemos los datos como el offset y otras cosas
+    oamSet(&oamMain, selectedZoneOamId,
+        previewXoffset+subSurfaceXoffset,
+        previewYoffset+subSurfaceYoffset,
+        0, previewPosAlpha,
+        SpriteSize_64x64, SpriteColorFormat_Bmp,
+        gfxSelectedZone,
+        -1,
+        false, false, false, false, false);
+    oamUpdate(&oamMain);
     
-    dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
-    
-    for(int i = 0; i * separation - phaseX < 64 || i * separation - phaseY < 64; i++) {
-        int x = i * separation - phaseX;
-        int y = i * separation - phaseY;
+}
+
+__attribute__((section(".itcm"))) void updatePreviewGfx(){
+    //reiniciamos visualmente todo
+    u16 color = AVinvertColor(palette[paletteOffset]);
+    dmaFillHalfWords(1,gfxSelectedZone, 64 * 64 * 2);
+
+    if(subSurfaceZoom > 0){
+        const int _size = 1<<(7-subSurfaceZoom);
+
+        const int offset = ((_size - 1) << 6);
+        const int size2 = _size-1;
+
+        // línea superior e inferior
+        for (int i = 0; i < _size; i++) {
+            gfxSelectedZone[i] = color;// top
+        }
+        for (int i = offset; i < _size+offset; i++) {
+            gfxSelectedZone[i] = color;// bottom
+        }
         
-        // línea vertical
-        if(x >= 0 && x < 64)
-            for(int j = 0; j < 64; j++)
-                gfxGrid[j * 64 + x] = color;
-        
-        // línea horizontal
-        if(y >= 0 && y < 64)
-            for(int j = 0; j < 64; j++)
-                gfxGrid[y * 64 + j] = color;
+        // líneas laterales
+        for (int j = 1; j < (_size - 1); j++){
+            gfxSelectedZone[(j << 6)]         = color;// left
+            gfxSelectedZone[(j << 6) + size2] = color;// right
+        }
     }
 }
 //=========================================================DRAW SURFACE========================================================================
@@ -713,21 +741,23 @@ void drawSurfaceBottom()
         subSurfaceYoffset = maxY;
     
     // --- Limitar el zoom ---
-    int maxRes = MAX(surfaceXres, surfaceYres);
+    if(prevZoom != subSurfaceZoom){
+        int maxRes = MAX(surfaceXres, surfaceYres);
     
-    int minZoom = 7 - maxRes;
-    int maxZoom = 6;
-    if (subSurfaceZoom < minZoom)
-    {
-        subSurfaceZoom = minZoom;
+        int minZoom = 7 - maxRes;
+        int maxZoom = 6;
+        if (subSurfaceZoom < minZoom)
+        {
+            subSurfaceZoom = minZoom;
+        }
+        if (subSurfaceZoom > maxZoom){
+            subSurfaceZoom = maxZoom;
+        }
     }
-    if (subSurfaceZoom > maxZoom){
-        subSurfaceZoom = maxZoom;
-    }
+
 
     s16 scale = 256 >> subSurfaceZoom;
     //un lut para los zooms
-    s16 zoomLut[8];
     s16 oamScale = 1<<(subSurfaceZoom+4);
     if(oamScale > 256){
         oamScale = 256;
@@ -741,6 +771,7 @@ void drawSurfaceBottom()
                 subSurfaceXoffset - (64 >> subSurfaceZoom), // centrar en x=64..191
                 subSurfaceYoffset);
     bgUpdate();
+    updatePreviewPos();
 }
 //==================== PALETAS ==========|
 // función auxiliar para esta situación específica
@@ -804,7 +835,7 @@ void drawNesPalette()
         }
     }
 }
-inline void drawColorPalette()
+__attribute__((section(".itcm"))) void drawColorPalette()
 {
     // dibujar paleta
     for (int i = 0; i < 16; i++) // vertical
@@ -879,9 +910,16 @@ void updatePal(int increment, int *palettePos)
     oamSetXY(&oamSub, paletteSelOamId, (posx << 2) + 191, (posy << 2) + 63);
     oamUpdate(&oamSub);
 }
+//esta función actualiza tanto el color como las barras de paletas
 void updatePalEditBar(int index)
 {
+    static int prevAmount[4] = {0,0,0,0};
+    if(prevAmount[index] == palEdit[index]){
+        return;
+    }
     int amount = palEdit[index];
+    prevAmount[index] = amount;
+    
 
     // Actualizar barra
     const u16 _barCol[3] = {C_RED, C_GREEN, C_BLUE};
@@ -907,10 +945,13 @@ void updatePalEditBar(int index)
     {
         drawSliderRect(gfxRGBsliders, 0, 0, MAX_ALPHA, _col);
         drawSliderRect(gfxRGBsliders, paletteAlpha, 0, 64 - paletteAlpha, 0);
-        if (palettePos == 0 && showGrid == true)
-        {
+    }
+    if (palettePos == 0)
+    {
+        if(showGrid == true){
             drawGrid(AVinvertColor(_col));
         }
+        updatePreviewGfx();
     }
 }
 
@@ -944,6 +985,8 @@ void initBitmap()
 
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
+    vramSetBankB(VRAM_B_MAIN_SPRITE);
+
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 4, true, true);
     consoleSetFont(&topConsole, &font);
     oamClear(&oamSub, 0, 128);
@@ -951,7 +994,7 @@ void initBitmap()
 
     videoSetModeSub(MODE_5_2D); // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
-    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
+    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM 
     // capas
     bgCanvas = bgInitSub(3, BgType_Bmp16, BgSize_B16_128x128, 4, 0);
     bgUI = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
@@ -959,7 +1002,7 @@ void initBitmap()
     pixelsVRAM = (u16 *)bgGetGfxPtr(bgCanvas);
 
     decompress(GFXinputBitmap, bgGetGfxPtr(bgUI), LZ77Vram);
-    dmaCopy(GFXinputPal, BG_PALETTE_SUB, GFXinputPalLen);
+    dmaCopy(GFXinputPal, BG_PALETTE_SUB, GFXinputPalLen);    
 
     drawSurfaceMain();
     drawSurfaceBottom();
@@ -969,7 +1012,10 @@ void initBitmap()
     bgSetPriority(bgCanvas, 3); // canvas prioridad mínima
     bgSetPriority(bgUI, 0);
     bgSetScale(3, 256, 256);
-    bgSetScroll(3, -64, -32);
+    //calcular offsets
+    previewXoffset = (SCREEN_W-(1<<surfaceXres))>>1;
+    previewYoffset = (SCREEN_H-(1<<surfaceYres))>>1;
+    bgSetScroll(3, -previewXoffset, -previewYoffset);
     bgUpdate();
 }
 u16 *gfxBrushSettings;
@@ -1008,7 +1054,7 @@ void setBrushSettingsSprites(bool on)
 void setEditorSprites()
 {
     // iniciamos el sprite para dibujar : )
-    oamInit(&oamMain, SpriteMapping_Bmp_1D_128, false);
+    oamInit(&oamMain,SpriteMapping_Bmp_1D_128, false);
     oamInit(&oamSub, SpriteMapping_Bmp_1D_128, false);
 
     oamClear(&oamMain, 0, 128);
@@ -1027,8 +1073,10 @@ void setEditorSprites()
 
     gfxBrushSettings = oamAllocateGfx(&oamSub, SpriteSize_32x16, SpriteColorFormat_Bmp);
     dmaCopy(GFXbrushSettingsBitmap, gfxBrushSettings, 32 * 16 * 2);
-    gfxRGBsliders = oamAllocateGfx(&oamSub, SpriteSize_64x32, SpriteColorFormat_Bmp);
-    dmaCopy(GFXrgbSlidersBitmap, gfxRGBsliders, 64 * 32 * 2);
+    if(!nesMode){
+        gfxRGBsliders = oamAllocateGfx(&oamSub, SpriteSize_64x32, SpriteColorFormat_Bmp);
+        dmaCopy(GFXrgbSlidersBitmap, gfxRGBsliders, 64 * 32 * 2);
+    }
     gfxRgbSliderSel = oamAllocateGfx(&oamSub, SpriteSize_8x8, SpriteColorFormat_Bmp);
     dmaCopy(GFXrgbSliderSelBitmap, gfxRgbSliderSel, 8 * 8 * 2);
 
@@ -1081,24 +1129,39 @@ void setEditorSprites()
     paletteOffset = 0;
     gfxGrid = oamAllocateGfx(&oamSub, SpriteSize_64x64, SpriteColorFormat_Bmp);
     dmaFillHalfWords(0, gfxGrid, 64 * 64 * 2);
+    gfxSelectedZone = oamAllocateGfx(&oamMain, SpriteSize_64x64, SpriteColorFormat_Bmp);
     
     for(int i = gridOamId; i < 4; i++)
     {
         oamSetBlendMode(&oamSub, i,SpriteMode_Blended);
     }
+    oamSetBlendMode(&oamMain,selectedZoneOamId,SpriteMode_Blended);
 
     const int eva = 5;
     const int evb = 8;
     const int evy = 10;
 
+    // Motor principal (oamMain)
     REG_BLDCNT = BLEND_ALPHA
-       | BLEND_SRC_SPRITE
-       | BLEND_DST_BG3
-       | BLEND_DST_BACKDROP;
+    | BLEND_SRC_SPRITE
+    | BLEND_DST_BG3
+    | BLEND_DST_BACKDROP;
+    REG_BLDALPHA = BLDALPHA_EVA(eva) | BLDALPHA_EVB(evb);
+    REG_BLDY     = BLDY_EVY(evy);
 
-REG_BLDCNT_SUB    = BLEND_ALPHA | BLEND_SRC_SPRITE | BLEND_DST_BG3 | BLEND_DST_BACKDROP;
-REG_BLDALPHA_SUB  = BLDALPHA_EVA(eva) | BLDALPHA_EVB(evb);
-REG_BLDY_SUB      = BLDY_EVY(evy);
+    // Motor secundario (oamSub)
+    REG_BLDCNT_SUB    = BLEND_ALPHA | BLEND_SRC_SPRITE | BLEND_DST_BG3 | BLEND_DST_BACKDROP;
+    REG_BLDALPHA_SUB  = BLDALPHA_EVA(eva) | BLDALPHA_EVB(evb);
+    REG_BLDY_SUB      = BLDY_EVY(evy);
+
+    oamSet(&oamMain, selectedZoneOamId,
+        0, 0,
+        0, 15,
+        SpriteSize_64x64, SpriteColorFormat_Bmp,
+        gfxSelectedZone,
+        -1,
+        false, false, false, false, false);
+        
     #define gridOpacity 8
     // top-left
     oamSet(&oamSub, gridOamId,
@@ -1136,6 +1199,8 @@ REG_BLDY_SUB      = BLDY_EVY(evy);
         -1,
         false, false, false, false, false);
     setBrushSettingsSprites(true);
+    updatePreviewPos();
+    updatePreviewGfx();
 }
 
 void setOamBG()
@@ -1206,15 +1271,18 @@ void bitmapMode()
     // reiniciamos VRAM
     videoSetMode(MODE_5_2D);
     vramSetBankA(VRAM_A_MAIN_BG);
-    // vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
+    vramSetBankB(VRAM_B_MAIN_SPRITE); // sprites en VRAM B
     int bgMain = bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
     consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 4, true, true);
     consoleSetFont(&topConsole, &font);
+
+    oamClear(&oamMain, 0, 128);
     oamClear(&oamSub, 0, 128);
 
     videoSetModeSub(MODE_5_2D); // pantalla inferior bitmap
     vramSetBankC(VRAM_C_SUB_BG);
     vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM D
+
     bgCanvas = bgInitSub(3, BgType_Bmp16, BgSize_B16_128x128, 4, 0);
     bgUI = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
 
@@ -1224,14 +1292,16 @@ void bitmapMode()
     setEditorSprites();
     paletteAlpha = MAX_ALPHA;
     submitVRAM(true); // recuperamos nuestros queridos datos
-    if (paletteBpp == 16)
-    {
-        setOamBG();
-    }
+
+    //ahora siempre activo
+    setOamBG();
     bgSetScale(bgCanvas, 256, 256);
     bgSetScroll(bgCanvas, -64, -32);
+
+    previewXoffset = (SCREEN_W-(1<<surfaceXres))>>1;
+    previewYoffset = (SCREEN_H-(1<<surfaceYres))>>1;
     bgSetScale(bgMain, 256, 256);
-    bgSetScroll(bgMain, -64, -32);
+    bgSetScroll(bgMain, -previewXoffset, -previewYoffset);
     drawSurfaceBottom();
     oamUpdate(&oamSub);
 }
@@ -1316,244 +1386,6 @@ void clearCache()
     mkdir(CACHE_PATH, 0777);
 }
 
-bool saveArray(const char *path, void *array, size_t size)
-{
-    FILE *file = fopen(path, "wb"); // write binary
-    if (!file)
-        return false;
-    fwrite(array, 1, size, file);
-    fclose(file);
-    return true;
-}
-
-bool loadArray(const char *path, void *array, size_t size)
-{
-    FILE *file = fopen(path, "rb"); // read binary
-    if (!file)
-        return false;
-    fread(array, 1, size, file);
-    fclose(file);
-    return true;
-}
-// ===================================================== ANIMATION ========================================== |
-#define PALETTE_SIZE (256 * 2) // 512 bytes, fijo siempre
-
-void loadAnimFrame(u16 *surface)
-{
-    FILE *f = fopen(ANIM_TEMP, "rb");
-    if (!f)
-        return;
-
-    int pixSize = 2 << surfaceXres << surfaceYres;
-    int blkSize = pixSize + PALETTE_SIZE;
-
-    fseek(f, (long)animation.pos * blkSize, SEEK_SET);
-    fread(surface, 1, pixSize, f);      // píxeles
-    fread(palette, 1, PALETTE_SIZE, f); // paleta del frame
-    fclose(f);
-}
-
-void saveAnimFrame()
-{
-    FILE *f = fopen(ANIM_TEMP, "r+b");
-    if (!f)
-        f = fopen(ANIM_TEMP, "wb");
-    if (!f)
-        return;
-
-    int pixSize = 2 << surfaceXres << surfaceYres;
-    int blkSize = pixSize + PALETTE_SIZE;
-
-    fseek(f, (long)animation.pos * blkSize, SEEK_SET);
-    fwrite(surface, 1, pixSize, f);      // píxeles
-    fwrite(palette, 1, PALETTE_SIZE, f); // paleta del frame
-    fclose(f);
-}
-
-void nextAnimFrame()
-{
-    saveAnimFrame();
-    if (animation.pos >= animation.frames)
-    {
-        animation.pos = 0;
-    }
-    else
-    {
-        animation.pos++;
-    }
-    loadAnimFrame(surface);
-    drawColorPalette();
-    updatePal(0, &palettePos);
-    drawSurfaceMain();
-    accurate = true;
-}
-
-void deleteAnimFrame()
-{
-    if (animation.frames <= 0)
-        return;
-
-    int pixSize = 2 << surfaceXres << surfaceYres;
-    int blkSize = pixSize + PALETTE_SIZE;
-
-    // Último frame: truncar
-    if (animation.pos >= animation.frames)
-    {
-        FILE *f = fopen(ANIM_TEMP, "ab");
-        if (!f)
-            return;
-        ftruncate(fileno(f), (long)(animation.frames - 1) * blkSize);
-        fclose(f);
-        animation.frames--;
-        if (animation.pos >= animation.frames)
-            animation.pos = animation.frames;
-        return;
-    }
-
-    FILE *src = fopen(ANIM_TEMP, "rb");
-    FILE *dst = fopen(ANIM_TEMP_NEW, "wb");
-    if (!src || !dst)
-    {
-        if (src)
-            fclose(src);
-        if (dst)
-            fclose(dst);
-        return;
-    }
-
-    u8 buffer[blkSize];
-
-    for (int i = 0; i <= animation.frames; i++)
-    { // frames+1 bloques en disco
-        fread(buffer, 1, blkSize, src);
-        if (i == animation.pos)
-            continue; // saltar el frame borrado
-        fwrite(buffer, 1, blkSize, dst);
-    }
-
-    fclose(src);
-    fclose(dst);
-    remove(ANIM_TEMP);
-    rename(ANIM_TEMP_NEW, ANIM_TEMP);
-
-    animation.frames--;
-    if (animation.pos >= animation.frames)
-        animation.pos = animation.frames - 1;
-}
-
-void insertAnimFrame()
-{
-    int pixSize = 2 << surfaceXres << surfaceYres;
-    int blkSize = pixSize + PALETTE_SIZE;
-
-    // Bloque vacío: píxeles a 0, paleta actual del editor
-    u8 empty[blkSize];
-    memset(empty, 0, pixSize);
-    memcpy(empty + pixSize, palette, PALETTE_SIZE); // hereda paleta actual
-
-    // Insertar al final: append directo
-    if (animation.pos >= animation.frames)
-    {
-        FILE *f = fopen(ANIM_TEMP, "ab");
-        if (!f)
-            return;
-        fwrite(empty, 1, blkSize, f);
-        fclose(f);
-        animation.frames++;
-        nextAnimFrame();
-        return;
-    }
-
-    FILE *src = fopen(ANIM_TEMP, "rb");
-    FILE *dst = fopen(ANIM_TEMP_NEW, "wb");
-    if (!src || !dst)
-    {
-        if (src)
-            fclose(src);
-        if (dst)
-            fclose(dst);
-        return;
-    }
-
-    u8 buffer[blkSize];
-
-    for (int i = 0; i <= animation.frames; i++)
-    {
-        fread(buffer, 1, blkSize, src);
-        fwrite(buffer, 1, blkSize, dst);
-        if (i == animation.pos)
-        {
-            fwrite(empty, 1, blkSize, dst); // insertar frame nuevo después del actual
-        }
-    }
-
-    fclose(src);
-    fclose(dst);
-    remove(ANIM_TEMP);
-    rename(ANIM_TEMP_NEW, ANIM_TEMP);
-
-    animation.frames++;
-    nextAnimFrame();
-}
-
-void playAnimation()
-{
-    if (animation.frames < 1)
-        return;
-
-    int pixSize = 2 << surfaceXres << surfaceYres;
-    int sw = 1 << surfaceXres;
-    int sh = 1 << surfaceYres;
-
-    while (animation.isPlaying)
-    {
-        animation.pos++;
-        if (animation.pos > animation.frames)
-            animation.pos = 0;
-
-        loadAnimFrame(stack); // carga píxeles a stack Y actualiza palette[]
-        DC_FlushRange(stack, pixSize);
-
-        for (int i = 0; i < animation.speed; i++)
-        {
-            scanKeys();
-            if (keysDown())
-                animation.isPlaying = false;
-            timerStop();
-            swiWaitForVBlank();
-            timerContinue();
-        }
-
-        frameEndTime = timerRead();
-        updateFPS();
-        drawInfo();
-        timerReset();
-        frameStartTime = timerRead();
-
-        if (paletteBpp == 16)
-        {
-            for (int y = 0; y < sh; y++)
-            {
-                u16 *dst = pixelsTopVRAM + (y << 7);
-                u16 *src = stack + (y << surfaceXres);
-                dmaCopy(src, dst, sw * 2);
-            }
-        }
-        else
-        {
-            // palette[] ya fue actualizado por loadAnimFrame
-            for (int y = 0; y < sh; y++)
-            {
-                u16 *dst = pixelsTopVRAM + (y << 7);
-                u16 *src = stack + (y << surfaceXres);
-                for (int x = 0; x < sw; x++)
-                {
-                    dst[x] = palette[src[x]];
-                }
-            }
-        }
-    }
-}
 //============================================================= INPUT =================================================|
 inline int getActionsFromKeys(int keys)
 {
@@ -1602,9 +1434,9 @@ int getActionsFromTouch(int button)
 }
 
 void applyActions(int actions)
-{                                                         // acciones compartidas entre teclas y touch
-    accurate = true;                                      // queremos que se renderize todo correctamente
-    int blockSize = (1 << surfaceXres) >> subSurfaceZoom; // tamaño de bloque en píxeles según el zoom
+{                                                         
+    accurate = true;                                      
+    int blockSize = (1 << surfaceXres) >> subSurfaceZoom;// tamaño de bloque en píxeles según el zoom
     if (kHeld & KEY_L || kHeld & KEY_X)
     {
         // --- Scroll por bloques ---
@@ -1628,6 +1460,7 @@ void applyActions(int actions)
     }
     else
     {
+        previewPosAlpha = 15;
         // --- Scroll por píxeles ---
         if (actions & ACTION_UP)
             subSurfaceYoffset--;
@@ -1641,10 +1474,12 @@ void applyActions(int actions)
         if (actions & ACTION_ZOOM_IN)
         {
             subSurfaceZoom++;
+            updatePreviewGfx();
         }
         if (actions & ACTION_ZOOM_OUT && subSurfaceZoom > 0)
         {
             subSurfaceZoom--;
+            updatePreviewGfx();
         }
     }
     drawSurfaceBottom();
@@ -1902,6 +1737,7 @@ void cutFromSurfaceToStack()
     // limpiar la pantalla
     int blockSize = 128 >> subSurfaceZoom;
     AVdrawRectangleDMA(surface, subSurfaceXoffset, blockSize, subSurfaceYoffset, blockSize, 0, surfaceXres);
+    accurate = true;
 }
 
 void pasteFromStackToSurface()
@@ -1923,6 +1759,7 @@ void pasteFromStackToSurface()
             surface[_y + j] = stack[y + j];
         }
     }
+    accurate = true;
 }
 
 // para paletas
@@ -2246,7 +2083,8 @@ void shiftLeftWrap()
     pasteFromStackToSurface();
 }
 //====================================================================MAIN==================================================================================================================|
-int main(void)
+//lo quitaré del itcm cuando me falte espacio ahí lol
+__attribute__((section(".itcm"))) int main(void)
 {
     defaultExceptionHandler(); // Mostrar crasheos
     // Intentar montar la SD
@@ -2321,7 +2159,7 @@ int main(void)
         swiWaitForVBlank();
     }
     //========================================================================WHILE LOOP!!!!!!!!!==========================================|
-    while (1)
+    while(1)
     {
         int actions = ACTION_NONE;
         // input
@@ -2356,7 +2194,7 @@ int main(void)
         }
         else // paleta de colores
         {
-            if (kHeld & KEY_SELECT)
+            if (kHeld & KEY_SELECT && nesMode == false)
             { // selector
                 if (kDown & (KEY_UP | KEY_DOWN))
                 {
@@ -2497,18 +2335,7 @@ int main(void)
                             break;
 
                         case 2: // prev frame
-                            saveAnimFrame();
-                            if (animation.pos <= 0)
-                            {
-                                animation.pos = animation.frames;
-                            }
-                            else
-                            {
-                                animation.pos--;
-                            }
-                            loadAnimFrame(surface);
-                            drawSurfaceMain();
-                            accurate = true;
+                            prevAnimFrame();
                             break;
 
                         case 3: // play animation
@@ -2831,6 +2658,12 @@ int main(void)
         }
 
     frameEnd:
+        //actualizamos el coso del preview
+        if(previewPosAlpha > 0){
+            previewPosAlpha--;
+            updatePreviewPos();
+        }
+        
         updateFPS();
 
         if (kUp & KEY_TOUCH && drew == true)

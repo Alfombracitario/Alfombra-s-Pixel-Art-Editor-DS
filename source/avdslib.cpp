@@ -4,7 +4,6 @@
 */
 #include <nds.h>
 
-
 // Cosas comunes
 u16 AVARGB(int r, int g, int b, int a = 1) {
     return ((a & 1) << 15)       // Alpha en bit 15

@@ -16,9 +16,7 @@ static const u8 log2Lut[129] = {
     6,    6,    6,    6,    6,    6,    6,    6,    6,    6,  // 110-119
     6,    6,    6,    6,    6,    6,    6,    6,    7,        // 120-128
 };
-//advertencia, estos importadores y exportadores de ACS están optimizados específicamente para este editor de pixel art,
-//ACS es un poco más complejo,
-//pero simplemente ignoré ciertos aspectos para que encaje en el hardware de la DS y la estructura de este editor de pixelart
+//This is the reader of ACS for A-pix DS, this was optimized to work better on this app using shortcuts.
 #define ACScolModeARGB1555   0
 #define ACScolModeARGB8888   1
 #define ACScolModeRGB888     2

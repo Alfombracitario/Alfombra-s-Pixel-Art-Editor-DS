@@ -1,4 +1,5 @@
-build/A-Pix/source/main.cpp.o: source/main.cpp \
+build/A-Pix/source/animation.cpp.o: source/animation.cpp \
+ source/animation.h \
  C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds.h \
  C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/bios.h \
  C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/ndstypes.h \
@@ -62,20 +63,8 @@ build/A-Pix/source/main.cpp.o: source/main.cpp \
  C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/arm9/teak/dsp.h \
  C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/arm9/teak/fifo.h \
  C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/arm9/teak/tlf.h \
- build/A-Pix/graphics/font.h source/timers.h source/textconsole.h \
- source/files.h source/formats.h source/acs.h source/formatsglobals.h \
- source/png/lodepng.h \
- C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/fat.h \
- source/avdslib.h source/intro.h source/animation.h \
- build/A-Pix/graphics/GFXinput.h build/A-Pix/graphics/GFXconsoleInput.h \
- build/A-Pix/graphics/GFXselector24.h \
- build/A-Pix/graphics/GFXselector16.h \
- build/A-Pix/graphics/GFXnewImageInput.h \
- build/A-Pix/graphics/GFXbackground.h build/A-Pix/graphics/GFXmore.h \
- build/A-Pix/graphics/GFXbrushSettings.h \
- build/A-Pix/graphics/GFXselector8.h build/A-Pix/graphics/GFXrgbSliders.h \
- build/A-Pix/graphics/GFXselector5.h \
- build/A-Pix/graphics/GFXrgbSliderSel.h
+ source/formatsglobals.h source/timers.h
+source/animation.h:
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds.h:
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/bios.h:
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/ndstypes.h:
@@ -139,27 +128,5 @@ C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/arm9/pe
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/arm9/teak/dsp.h:
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/arm9/teak/fifo.h:
 C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/nds/arm9/teak/tlf.h:
-build/A-Pix/graphics/font.h:
-source/timers.h:
-source/textconsole.h:
-source/files.h:
-source/formats.h:
-source/acs.h:
 source/formatsglobals.h:
-source/png/lodepng.h:
-C:/msys64/opt/wonderful/thirdparty/blocksds/core/libs/libnds/include/fat.h:
-source/avdslib.h:
-source/intro.h:
-source/animation.h:
-build/A-Pix/graphics/GFXinput.h:
-build/A-Pix/graphics/GFXconsoleInput.h:
-build/A-Pix/graphics/GFXselector24.h:
-build/A-Pix/graphics/GFXselector16.h:
-build/A-Pix/graphics/GFXnewImageInput.h:
-build/A-Pix/graphics/GFXbackground.h:
-build/A-Pix/graphics/GFXmore.h:
-build/A-Pix/graphics/GFXbrushSettings.h:
-build/A-Pix/graphics/GFXselector8.h:
-build/A-Pix/graphics/GFXrgbSliders.h:
-build/A-Pix/graphics/GFXselector5.h:
-build/A-Pix/graphics/GFXrgbSliderSel.h:
+source/timers.h:
