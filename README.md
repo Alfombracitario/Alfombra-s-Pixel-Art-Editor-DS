@@ -5,7 +5,7 @@
 A pixel art editor developed specifically for the **Nintendo DS**, inspired by YY-CHR.  
 Designed and tested to run on **original Nintendo DS hardware**. Emulator compatibility is **not guaranteed**, and emulator-specific issues are not a priority for this project.
 
-*Tested on DSi. DS testers welcome.*
+If you want to run this app I recommend you to use TwilightMenu++ or unlaunch.
 
 *If you still want to use an emulator, use MelonDS!*
 ---
