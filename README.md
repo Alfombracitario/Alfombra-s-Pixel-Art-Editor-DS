@@ -115,3 +115,22 @@ Each frame must currently be exported individually — `.gif` export is not yet 
 ---
 
 **Discord:** https://discord.gg/smJcPKfBBW
+
+---
+
+## Acknowledgments
+
+**A huge thank you to the testers and feedback providers** who helped shape A-Pix DS on real hardware:
+
+- **Doclic**  
+- **Pseudo**  
+- **PypeBros**
+
+Your reports and suggestions have been invaluable.
+
+**Special thanks to:**  
+- **AntonioND** – for creating [BlocksDS](https://github.com/blocksds/sdk), the amazing development kit that made this project possible.
+
+---
+
+*Want to see your name here? [Test the app](link-to-release) and share your feedback!*
