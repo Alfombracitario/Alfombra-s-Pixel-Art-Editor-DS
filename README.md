@@ -23,7 +23,7 @@ Designed and tested to run on **original Nintendo DS hardware**. Emulator compat
 - Palette editor with per-channel precision editing and copy/paste
 - Color bucket — replace a palette index, an entire color across the image or just a zone
 - File browser with preview and smooth scrolling
-- Animation support *(experimental — see below)*
+- Animation support
 - A few easter eggs hidden somewhere in the app
 
 ---
