@@ -91,22 +91,22 @@ It supports multiple color depths and compression commands tailored for pixel ar
 
 ---
 
-## Animation *(Experimental)*
+## Animations
 
-A-Pix DS includes basic animation support: add frames, delete frames, change playback speed, and more.
+A-Pix DS includes basic animation support: add frames, delete frames and change playback speed
 
 <img width="260" height="35" alt="animation bar" src="https://github.com/user-attachments/assets/721bb411-0aa3-49f5-b847-38cdc4d5fdfb" />
 
+the app now is stable but pretty limited.
+
 Each frame must currently be exported individually — `.gif` export is not yet available.  
-The app may behave unexpectedly in some animation scenarios.
 
 ---
 
 ## Current Limitations
 
 - Maximum image size: **128×128 pixels**
-- Animation export is frame-by-frame only (no GIF)
-
+- you can use Redo 8 times
 ---
 
 <img width="256" height="384" alt="githubiconapixds" src="https://github.com/user-attachments/assets/7670c65a-591c-4be7-95f6-85ec90b98b3d" />
