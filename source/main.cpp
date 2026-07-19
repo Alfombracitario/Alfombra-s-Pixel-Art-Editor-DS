@@ -1341,7 +1341,7 @@ void setBackupVariables()
 void backupWrite()
 {
     backupIndex++;
-    if (backupIndex >= backupMax)
+    if (backupIndex > backupMax)
     {
         backupIndex = 0;
     }
@@ -1354,6 +1354,7 @@ void backupRead()
     // Calculamos el índice del bloque en el array backup
     int index = backupIndex * backupSize;
     dmaCopyHalfWords(2, backup + index, surface, backupSize * sizeof(u16));
+    accurate = true;
 }
 //============================================================= SD CARD ===============================================|
 void createAppFolder()
