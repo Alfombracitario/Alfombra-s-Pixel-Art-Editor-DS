@@ -11,17 +11,10 @@
 
 ![Platform](https://img.shields.io/badge/platform-Nintendo%20DS-red?style=flat-square)
 
-](#)
-[
-
 ![Downloads](https://img.shields.io/github/downloads/Alfombracitario/A-PIX_DS/total?style=flat-square)
 
 ](https://github.com/Alfombracitario/A-PIX_DS/releases)
 [
-
-![Discord](https://img.shields.io/discord/DISCORD_SERVER_ID?label=discord&style=flat-square)
-
-](https://discord.gg/smJcPKfBBW)
 
 # A-Pix DS
 
