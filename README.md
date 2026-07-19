@@ -135,7 +135,7 @@ Each frame must currently be exported individually — `.gif` export is not yet 
 - **Mowrious**
 - **PypeBros**
 
-Your suggestions is what makes this app beter!
+Your suggestions is what makes this app better!
 
 **Special thanks to:**  
 - **AntonioND** – for creating [BlocksDS](https://github.com/blocksds/sdk), the amazing development kit that made this project possible.
