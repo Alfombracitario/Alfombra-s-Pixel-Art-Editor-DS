@@ -16,7 +16,7 @@ void initFPS() {
 #endif
 }
 
-void updateFPS() {
+void __attribute__((section(".itcm"))) updateFPS() {
 #ifdef DEBUG_CPU
     frameCount++;
     time_t now = time(NULL);

@@ -10,7 +10,7 @@ extern u16* bgPreviewGfx;
 extern int bgPreview;
 extern void drawNesPalette();
 extern u32 kDown;
-extern u16 stack[16384];
+extern u16 stack[surfaceSize];
 
 char fname[MAX_TEXT_LENGTH];
 DIR* currentDir = NULL;

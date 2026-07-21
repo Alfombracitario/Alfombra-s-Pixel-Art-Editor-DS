@@ -3,4 +3,6 @@
 
 void intro();
 
+extern u8 isGreen;
+
 #endif

@@ -3,9 +3,9 @@
     Alfombra's visual DS library.
 */
 #include <nds.h>
-
+#include "avdslib.h"
 // Cosas comunes
-u16 AVARGB(int r, int g, int b, int a = 1) {
+u16 AVARGB(int r, int g, int b, int a) {
     return ((a & 1) << 15)       // Alpha en bit 15
          | ((b & 31) << 10)      // Azul
          | ((g & 31) << 5)       // Verde
@@ -57,7 +57,7 @@ void AVdrawRectangle(u16* arr, int x, int width, int y, int height, u16 color)
     }
 }
 
-void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color,int arrayXres = 8) {
+void AVdrawRectangleDMA(u16* arr, int x, int width, int y, int height, u16 color,int arrayXres) {
     int xto = x + width;
     height += y;
     for (int i = y; i < height; i++) {

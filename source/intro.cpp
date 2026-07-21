@@ -37,6 +37,7 @@ static u8  starZ [MAX_STARS];
 static u16 spriteX[MAX_STARS];
 static u16 spriteY[MAX_STARS];
 
+u8 isGreen;
 static void vblank_handler(void)
 {
     // Stop the previous DMA copy
@@ -151,7 +152,7 @@ void updateStars(int i) {
 }
 
 void genGradient(){
-    static u8 isGreen = (rand() % 100 == 0) ? 5 : 0;//Easter egg!
+    u8 isGreen = (rand() % 50  == 0) ? 5 : 0;//Easter egg!
     static int frame = 0;
     if(frame > 31) {return;}
     int maxR = MIN(frame,30)>>1;

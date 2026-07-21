@@ -289,6 +289,9 @@ int importSNES(const char* path, u16* surface) {
 }
 
 int exportSNES(const char* path, u16* surface, int height) {
+    if (!path || !surface) return -1;
+    if (height <= 0 || height > 128) return -1;
+    if (height % 8 != 0) return -1;
 
     int dataSize = 0;
     FILE* f = openFileOffset(path,&dataSize);

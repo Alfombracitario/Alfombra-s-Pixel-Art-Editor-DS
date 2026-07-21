@@ -102,7 +102,7 @@ u16 pixelsTop[surfaceSize];                         // copia en RAM (es más rá
 u16 __attribute__((section(".dtcm"))) palette[256]; // ram rápida sin cache miss, perfecto para acceso aleatorio de paletas
 
 u16 stack[surfaceSize]; // para operaciones temporales
-u16 backup[128*128*8];     // para undo/redo y cargar imagenes 256kb
+u16 backup[BACKUP_SIZE];     // para undo/redo y cargar imagenes 256kb
 
 u16 gradientTable[SCREEN_H];
 
@@ -123,8 +123,9 @@ touchPosition touch;
 int bgCanvas;
 int bgUI;
 
-int backupMax = 8;
+
 int backupSize = surfaceSize << 1;
+int backupMax = BACKUP_SIZE/backupSize;
 
 int backupIndex = -1; // índice del último frame guardado
 int oldestBackup = 0; // límite inferior (el frame más antiguo que aún es válido)
@@ -270,7 +271,6 @@ ConsoleFont font = {
 };
 
 // FUNCIONES
-
 void submitVRAM(bool _accurate = false)
 {
     const u32 sizeTop = surfaceSize << 1;
@@ -332,10 +332,11 @@ void initGradient()
             r = 0;
 
         int b = (31 - i) >> 1;
-        u16 color = (b << 10) | r;
+        u16 color = (b << 10) | (r<<isGreen);
         gradientTable[i] = color;
         gradientTable[SCREEN_H - i] = color;
     }
+    //pequeña probabilidad de que el gradiente se invierta :>
     irqSet(IRQ_VBLANK, vblank_handler); // configurar HDMA
 }
 __attribute__((section(".itcm"))) bool brushPatternPass(int x, int y, BrushMode mode)
@@ -979,45 +980,6 @@ void clearAll()
     }
 }
 
-void initBitmap()
-{
-    clearAll();
-
-    videoSetMode(MODE_5_2D);
-    vramSetBankA(VRAM_A_MAIN_BG);
-    vramSetBankB(VRAM_B_MAIN_SPRITE);
-
-    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 4, true, true);
-    consoleSetFont(&topConsole, &font);
-    oamClear(&oamSub, 0, 128);
-    bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
-
-    videoSetModeSub(MODE_5_2D); // pantalla inferior bitmap
-    vramSetBankC(VRAM_C_SUB_BG);
-    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM 
-    // capas
-    bgCanvas = bgInitSub(3, BgType_Bmp16, BgSize_B16_128x128, 4, 0);
-    bgUI = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
-
-    pixelsVRAM = (u16 *)bgGetGfxPtr(bgCanvas);
-
-    decompress(GFXinputBitmap, bgGetGfxPtr(bgUI), LZ77Vram);
-    dmaCopy(GFXinputPal, BG_PALETTE_SUB, GFXinputPalLen);    
-
-    drawSurfaceMain();
-    drawSurfaceBottom();
-    accurate = true;
-
-    // Prioridades: UI detrás del canvas
-    bgSetPriority(bgCanvas, 3); // canvas prioridad mínima
-    bgSetPriority(bgUI, 0);
-    bgSetScale(3, 256, 256);
-    //calcular offsets
-    previewXoffset = (SCREEN_W-(1<<surfaceXres))>>1;
-    previewYoffset = (SCREEN_H-(1<<surfaceYres))>>1;
-    bgSetScroll(3, -previewXoffset, -previewYoffset);
-    bgUpdate();
-}
 u16 *gfxBrushSettings;
 u16 *gfx8;
 void setBrushSettingsSprites(bool on)
@@ -1222,6 +1184,52 @@ void setOamBG()
                false, false, false, false, false);
     }
 }
+
+void initBitmap()
+{
+    clearAll();
+
+    videoSetMode(MODE_5_2D);
+    vramSetBankA(VRAM_A_MAIN_BG);
+    vramSetBankB(VRAM_B_MAIN_SPRITE);
+
+    consoleInit(&topConsole, 0, BgType_Text4bpp, BgSize_T_256x256, 31, 4, true, true);
+    consoleSetFont(&topConsole, &font);
+    oamClear(&oamSub, 0, 128);
+    bgInit(3, BgType_Bmp16, BgSize_B16_128x128, 0, 0);
+
+    videoSetModeSub(MODE_5_2D); // pantalla inferior bitmap
+    vramSetBankC(VRAM_C_SUB_BG);
+    vramSetBankD(VRAM_D_SUB_SPRITE); // sprites en VRAM 
+    // capas
+    bgCanvas = bgInitSub(3, BgType_Bmp16, BgSize_B16_128x128, 4, 0);
+    bgUI = bgInitSub(2, BgType_Bmp8, BgSize_B8_256x256, 0, 0);
+
+    pixelsVRAM = (u16 *)bgGetGfxPtr(bgCanvas);
+
+    decompress(GFXinputBitmap, bgGetGfxPtr(bgUI), LZ77Vram);
+    dmaCopy(GFXinputPal, BG_PALETTE_SUB, GFXinputPalLen);    
+
+
+    drawSurfaceMain();
+    drawSurfaceBottom();
+    accurate = true;
+    submitVRAM();
+
+    // Prioridades: UI detrás del canvas
+    bgSetPriority(bgCanvas, 3); // canvas prioridad mínima
+    bgSetPriority(bgUI, 0);
+    bgSetScale(3, 256, 256);
+    //calcular offsets
+    previewXoffset = (SCREEN_W-(1<<surfaceXres))>>1;
+    previewYoffset = (SCREEN_H-(1<<surfaceYres))>>1;
+    bgSetScroll(3, -previewXoffset, -previewYoffset);
+    bgUpdate();
+
+    setEditorSprites();
+    setBackupVariables();
+}
+
 //====================================================================Compatibilidad con modos gráficos====================================|
 void textMode()
 {
@@ -1331,7 +1339,8 @@ void setBackupVariables()
 {
     backupIndex = 0;
     backupSize = 1 << surfaceXres << surfaceYres;
-    backupMax = 131072 >> surfaceXres >> surfaceYres;
+    backupMax = BACKUP_SIZE/backupSize;
+    
     // reinicia el backup
     for (int i = 0; i < 131072; i++)
     {
@@ -1362,6 +1371,7 @@ void createAppFolder()
     mkdir("/_nds/", 0777);
     mkdir(APP_PATH, 0777);
 }
+
 void clearCache()
 {
     // abrir el directorio
@@ -2146,12 +2156,10 @@ __attribute__((section(".itcm"))) int main(void)
     }
     // antes de iniciar el programa, mostramos la intro
     intro();
+    initGradient();
 
     initBitmap();
-    setEditorSprites();
-    setBackupVariables();
     initFPS();
-    initGradient();
     initTimers();
     // aclarar la pantalla
     for (int i = 0; i < 16; i++)
