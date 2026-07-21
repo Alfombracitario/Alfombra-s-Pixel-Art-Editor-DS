@@ -142,4 +142,4 @@ Your suggestions is what makes this app better!
 
 ---
 
-*Want to see your name here? [Test the app] Test the app and share your feedback!*
+*Want to see your name here? Test the app and share your feedback!*
