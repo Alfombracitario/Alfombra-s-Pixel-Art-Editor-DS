@@ -59,7 +59,7 @@ If you want to run this app I recommend you to use TwilightMenu++ or unlaunch.
 
 | Button | Action |
 |--------|--------|
-| **SELECT** + D-Pad | Edit palette color with per-channel precision |
+| **SELECT** + D-Pad | Edit palette color with precision |
 ---
 
 ## Supported Formats
@@ -88,7 +88,7 @@ If you want to run this app I recommend you to use TwilightMenu++ or unlaunch.
 |--------|-------|
 | YY-CHR `.pal` | Import / Export |
 | ARGB 1555 `.pal` | Import / Export |
-
+| NES | Hardcoded, only in NES mode |
 ---
 
 ## What is `.acs`?
@@ -105,7 +105,7 @@ A-Pix DS includes basic animation support: add frames, delete frames and change 
 
 <img width="260" height="35" alt="animation bar" src="https://github.com/user-attachments/assets/721bb411-0aa3-49f5-b847-38cdc4d5fdfb" />
 
-the app now is stable but pretty limited.
+the app now is stable but pretty limited in this aspect.
 
 Each frame must currently be exported individually — `.gif` export is not yet available.  
 
@@ -114,7 +114,7 @@ Each frame must currently be exported individually — `.gif` export is not yet 
 ## Current Limitations
 
 - Maximum image size: **128×128 pixels**
-- you can use Redo 8 times
+- you can use Redo 8 times (soon up to 80 times!)
 ---
 
 <img width="256" height="384" alt="githubiconapixds" src="https://github.com/user-attachments/assets/7670c65a-591c-4be7-95f6-85ec90b98b3d" />
